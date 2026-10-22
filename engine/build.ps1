@@ -59,3 +59,4 @@ if ($p.ExitCode -ne 0) {
     exit $p.ExitCode
 }
 Write-Host "BUILD OK: $out"
+exit 0

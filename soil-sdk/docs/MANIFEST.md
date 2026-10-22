@@ -21,7 +21,16 @@ copies it into the payload as `/manifest.json`, and embeds it in the `.sol` head
   "permissions": ["clipboard", "dialogs", "notifications", "openExternal"],
   "exec": [],
   "install": null,
-  "min_ram_mb": 96
+  "min_ram_mb": 96,
+  "build": {
+    "command": "npm run build",
+    "webDir": "dist",
+    "entry": "index.html"
+  },
+  "dev": {
+    "command": "npm run dev",
+    "url": "http://127.0.0.1:5173/"
+  }
 }
 ```
 
@@ -44,6 +53,30 @@ copies it into the payload as `/manifest.json`, and embeds it in the `.sol` head
 | `exec` | array | kind 3 / installer | Relative paths of bundled executables allowed via `soil.exec`. |
 | `install` | object | kind `installer` | `{ "command": "install.sh", "args": [], "root": false }`. |
 | `min_ram_mb` | int | no | Advisory; `soil run` warns when guest memory is below it. |
+| `build` | object | no | Host-side frontend build: `command`, optional `webDir` and `entry`. |
+| `dev` | object | no | Host-side dev server: `command` and optional `url`. |
+
+## Frontend build and dev commands
+
+`build` and `dev` are developer-tooling metadata. The runtime and installer
+ignore them; only `soil.py` uses them on the development host.
+
+```json
+"build": {
+  "command": "npm run build",
+  "webDir": "dist",
+  "entry": "index.html"
+},
+"dev": {
+  "command": "npm run dev",
+  "url": "http://127.0.0.1:5173/"
+}
+```
+
+With this section, `soil dev .` starts `npm run dev`, and `soil build .` runs
+`npm run build` then stages `dist` into the package's `web/` directory. Paths
+must be relative and stay inside the app directory. CLI flags override the
+manifest. Unknown fields are preserved but ignored by the runtime.
 
 ## Permissions
 

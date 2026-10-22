@@ -12,6 +12,22 @@
   const hint = $('#hint');
   const charts = $('#charts');
   const themeSw = $('#theme');
+  const tabMachines = $('#tab-machines');
+  const tabFiles = $('#tab-files');
+  const machineNav = $('#machine-nav');
+  const filesNav = $('#files-nav');
+  const filesView = $('#files');
+  const places = $('#places');
+  const crumbs = $('#crumbs');
+  const fileListEl = $('#file-list');
+  const fileUp = $('#file-up');
+  const previewEmpty = $('#preview-empty');
+  const previewCard = $('#preview-card');
+  const previewKind = $('#preview-kind');
+  const previewName = $('#preview-name');
+  const previewMeta = $('#preview-meta');
+  const previewText = $('#preview-text');
+  const previewImage = $('#preview-image');
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   const LABEL = { running: 'Running', stopped: 'Stopped', starting: 'Starting', stopping: 'Stopping' };
@@ -24,10 +40,17 @@
     moveX: 0,
     moveY: 0,
     moveQueued: false,
-    keys: new Set()
+    keys: new Set(),
+    view: 'machines',
+    filePath: '',
+    fileParent: null,
+    fileEntries: [],
+    selectedFile: null
   };
   const cards = {};
   let pendingDeleteId = null;
+  let fileRequest = 0;
+  let previewRequest = 0;
 
   const current = () => state.vms.find((vm) => vm.id === state.selected) || null;
   const currentLive = () => {
@@ -312,6 +335,248 @@
     drawCharts(vm);
   }
 
+  /* ---------------- files ---------------- */
+  const PLACES = [
+    { label: 'Soil home', path: '' },
+    { label: 'Machines', path: 'machines' },
+    { label: 'Apps', path: 'apps' },
+    { label: 'Skills', path: 'skills' },
+    { label: 'Cache', path: 'cache' },
+    { label: 'Logs', path: 'logs' }
+  ];
+  const FOLDER_ICON =
+    '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.75 4.25h4l1.2 1.5h7.3v6.5a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
+  const FILE_ICON =
+    '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.75h5l3 3v9.5H4z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M9 1.75v3h3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
+
+  function fileQuery(path, extra) {
+    let query = '?path=' + encodeURIComponent(path || '');
+    return extra ? query + '&' + extra : query;
+  }
+
+  async function fileJson(url, options) {
+    const response = await fetch(url, { cache: 'no-store', ...options });
+    if (!response.ok) {
+      let message = 'Request failed (' + response.status + ')';
+      try {
+        const body = await response.json();
+        if (body && body.error) message = body.error;
+      } catch (_) {}
+      throw new Error(message);
+    }
+    const text = await response.text();
+    return text ? JSON.parse(text) : null;
+  }
+
+  function formatSize(bytes) {
+    if (typeof bytes !== 'number' || bytes < 0) return '—';
+    if (bytes < 1024) return bytes + ' B';
+    const units = ['KB', 'MB', 'GB', 'TB'];
+    let value = bytes / 1024;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit += 1;
+    }
+    return (value >= 10 ? Math.round(value) : value.toFixed(1)) + ' ' + units[unit];
+  }
+
+  function formatWhen(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function renderPlaces() {
+    places.replaceChildren();
+    for (const place of PLACES) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'place';
+      button.dataset.path = place.path;
+      button.innerHTML = FOLDER_ICON;
+      const label = document.createElement('span');
+      label.textContent = place.label;
+      button.append(label);
+      button.addEventListener('click', () => loadFiles(place.path));
+      places.append(button);
+    }
+  }
+
+  function paintPlaces() {
+    for (const button of places.querySelectorAll('.place')) {
+      const path = button.dataset.path || '';
+      button.classList.toggle('sel', path === state.filePath);
+    }
+  }
+
+  function renderCrumbs() {
+    crumbs.replaceChildren();
+    const home = document.createElement('button');
+    home.type = 'button';
+    home.className = 'crumb';
+    home.textContent = 'Soil home';
+    home.addEventListener('click', () => loadFiles(''));
+    crumbs.append(home);
+
+    let accumulated = '';
+    for (const segment of state.filePath ? state.filePath.split('/') : []) {
+      accumulated = accumulated ? accumulated + '/' + segment : segment;
+      const separator = document.createElement('span');
+      separator.className = 'crumb-sep';
+      separator.textContent = '/';
+      crumbs.append(separator);
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'crumb';
+      button.textContent = segment;
+      const target = accumulated;
+      button.addEventListener('click', () => loadFiles(target));
+      crumbs.append(button);
+    }
+  }
+
+  function renderFiles() {
+    fileListEl.replaceChildren();
+    if (!state.fileEntries.length) {
+      const empty = document.createElement('p');
+      empty.className = 'file-empty';
+      empty.textContent = 'This folder is empty.';
+      fileListEl.append(empty);
+      return;
+    }
+    for (const entry of state.fileEntries) {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'frow';
+      row.dataset.path = entry.path;
+      row.title = entry.path;
+      row.innerHTML =
+        (entry.kind === 'folder' ? FOLDER_ICON : FILE_ICON) +
+        '<span class="fname"></span><span class="fsize"></span><span class="fdate"></span>';
+      row.querySelector('.fname').textContent = entry.name;
+      row.querySelector('.fsize').textContent = entry.kind === 'folder' ? '' : formatSize(entry.size);
+      row.querySelector('.fdate').textContent = formatWhen(entry.modifiedUtc);
+      row.addEventListener('click', () => {
+        if (entry.kind === 'folder') {
+          loadFiles(entry.path);
+        } else {
+          previewFile(entry, row);
+        }
+      });
+      fileListEl.append(row);
+    }
+  }
+
+  function clearPreview() {
+    state.selectedFile = null;
+    previewRequest += 1;
+    previewCard.hidden = true;
+    previewEmpty.hidden = false;
+    previewText.hidden = true;
+    previewText.textContent = '';
+    previewImage.hidden = true;
+    previewImage.removeAttribute('src');
+  }
+
+  async function previewFile(entry, row) {
+    const ticket = ++previewRequest;
+    for (const selected of fileListEl.querySelectorAll('.frow.sel')) selected.classList.remove('sel');
+    row.classList.add('sel');
+    state.selectedFile = entry;
+    previewEmpty.hidden = true;
+    previewCard.hidden = false;
+    previewKind.textContent = entry.kind === 'link' ? 'Link' : 'File';
+    previewName.textContent = entry.name;
+    previewMeta.textContent = entry.path + ' · ' + formatSize(entry.size) + ' · ' + formatWhen(entry.modifiedUtc);
+    previewText.hidden = true;
+    previewText.textContent = '';
+    previewImage.hidden = true;
+    previewImage.removeAttribute('src');
+
+    if (/\.(png|jpe?g|gif|webp|svg)$/i.test(entry.name)) {
+      previewKind.textContent = 'Image';
+      previewImage.src = '/api/files/raw' + fileQuery(entry.path, 't=' + Date.now());
+      previewImage.hidden = false;
+      return;
+    }
+
+    try {
+      const data = await fileJson('/api/files/content' + fileQuery(entry.path));
+      if (ticket !== previewRequest) return;
+      if (data.kind === 'text') {
+        previewKind.textContent = 'Text';
+        previewText.textContent = data.content;
+      } else {
+        previewText.textContent = 'Binary file. Use Open to view it with the default app.';
+      }
+      previewText.hidden = false;
+    } catch (error) {
+      if (ticket !== previewRequest) return;
+      previewText.textContent = error.message;
+      previewText.hidden = false;
+    }
+  }
+
+  previewImage.addEventListener('error', () => {
+    previewImage.hidden = true;
+    previewText.textContent = 'This image could not be shown. Use Open instead.';
+    previewText.hidden = false;
+  });
+
+  async function loadFiles(path) {
+    const ticket = ++fileRequest;
+    state.view = 'files';
+    try {
+      const data = await fileJson('/api/files' + fileQuery(path || ''));
+      if (ticket !== fileRequest) return;
+      state.filePath = data.path || '';
+      state.fileParent = data.parent;
+      state.fileEntries = data.entries || [];
+      renderCrumbs();
+      renderFiles();
+      paintPlaces();
+      clearPreview();
+      fileUp.disabled = data.parent === null || data.parent === undefined;
+    } catch (error) {
+      if (ticket !== fileRequest) return;
+      fileListEl.replaceChildren();
+      const message = document.createElement('p');
+      message.className = 'file-empty';
+      message.textContent = error.message;
+      fileListEl.append(message);
+    }
+  }
+
+  function setView(view) {
+    state.view = view;
+    const files = view === 'files';
+    tabMachines.classList.toggle('active', !files);
+    tabFiles.classList.toggle('active', files);
+    machineNav.hidden = files;
+    filesNav.hidden = !files;
+    screen.hidden = files;
+    charts.hidden = files;
+    filesView.hidden = !files;
+    if (files) loadFiles(state.filePath);
+  }
+
+  async function openFile(path) {
+    try {
+      await fileJson('/api/files/open' + fileQuery(path), { method: 'POST' });
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  async function revealFile(path) {
+    try {
+      await fileJson('/api/files/reveal' + fileQuery(path), { method: 'POST' });
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
   /* ---------------- actions ---------------- */
   async function parse(response) {
     if (!response.ok) throw new Error('Request failed (' + response.status + ')');
@@ -342,7 +607,7 @@
       renderList();
       renderSelected();
     } catch (error) {
-      setUnavailable('The local Boxify service is not responding.');
+      setUnavailable('The local Soil service is not responding.');
     }
   }
 
@@ -538,7 +803,7 @@
     const apply = () => {
       root.dataset.theme = dark ? 'dark' : 'light';
       themeSw.setAttribute('aria-checked', String(dark));
-      try { localStorage.setItem('boxify-theme', root.dataset.theme); } catch (_) {}
+      try { localStorage.setItem('soil-theme', root.dataset.theme); } catch (_) {}
     };
     if (!document.startViewTransition || reduce) {
       apply();
@@ -581,7 +846,14 @@
   themeSw.addEventListener('click', () => setTheme(!isDark()));
 
   /* ---------------- dialogs ---------------- */
-  $('#open-set').addEventListener('click', () => $('#dlg-set').showModal());
+  $('#open-set').addEventListener('click', async () => {
+    $('#dlg-set').showModal();
+    try {
+      const info = await fileJson('/api/info');
+      $('#soil-home').textContent = info.home;
+    } catch (_) {}
+  });
+  $('#open-home').addEventListener('click', () => openFile(''));
   $('#close-set').addEventListener('click', () => $('#dlg-set').close());
   $('#add').addEventListener('click', () => {
     $('#f-name').value = 'soil-' + String(state.vms.length + 1).padStart(2, '0');
@@ -595,8 +867,23 @@
   $('#del-form').addEventListener('submit', deleteVm);
   $('#dlg-del').addEventListener('close', () => { pendingDeleteId = null; });
   $('#expand').addEventListener('click', toggleExpanded);
+  tabMachines.addEventListener('click', () => setView('machines'));
+  tabFiles.addEventListener('click', () => setView('files'));
+  fileUp.addEventListener('click', () => {
+    if (state.fileParent !== null && state.fileParent !== undefined) loadFiles(state.fileParent);
+  });
+  $('#file-refresh').addEventListener('click', () => loadFiles(state.filePath));
+  $('#file-open').addEventListener('click', () => openFile(state.filePath));
+  $('#preview-open').addEventListener('click', () => {
+    if (state.selectedFile) openFile(state.selectedFile.path);
+  });
+  $('#preview-reveal').addEventListener('click', () => {
+    if (state.selectedFile) revealFile(state.selectedFile.path);
+  });
   themeSw.setAttribute('aria-checked', String(isDark()));
 
+  renderPlaces();
+  setView('machines');
   load();
   setInterval(load, 2000);
 })();

@@ -15,15 +15,22 @@ python tools/soil.py dev my-app
 python tools/soil.py build my-app
 ```
 
-For a frontend build such as Vite:
+For React + TypeScript or plain Vite:
 
 ```sh
-python tools/soil.py init --template vite my-app
+python tools/soil.py init --template react-ts my-app
 cd my-app
 npm install
-python /path/to/soil-sdk/tools/soil.py dev . --frontend "npm run dev"
-npm run build
-python /path/to/soil-sdk/tools/soil.py build . --web-dir dist
+python /path/to/soil-sdk/tools/soil.py dev .
+python /path/to/soil-sdk/tools/soil.py build .
+```
+
+The scaffold's `soil.json` stores `build.command` and `build.webDir`, so
+`soil build .` runs the frontend build and packs its output. To use another
+frontend builder:
+
+```sh
+python /path/to/soil-sdk/tools/soil.py build . --frontend-build "npm run build" --web-dir dist
 ```
 
 The low-level packer remains available when you need direct control:
@@ -65,7 +72,8 @@ my-app/
 
 Everything in the directory is packed (except `.git`, `node_modules`, `dist`,
 `*.sol` at the root). Hidden files are included; delete build junk before
-packing.
+packing. With `build.webDir` or `--web-dir`, only the staged frontend output is
+packed.
 
 ## Packing details
 
@@ -103,6 +111,8 @@ see `docs/TESTING.md`.
 | Symptom | Cause |
 |---------|-------|
 | `manifest: entry missing` | `entry` path not present in the app dir |
+| `web output directory not found` | run the frontend build or fix `build.webDir` |
+| `frontend build failed` | fix the configured build command; rerun `soil build` |
 | `manifest: exec path not found` | listed helper does not exist |
 | `pack: symlink rejected` | remove/replace symlinks in the app dir |
 | `verify: digest mismatch` | file corrupted or truncated; repack |

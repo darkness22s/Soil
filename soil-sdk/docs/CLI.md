@@ -14,25 +14,39 @@ python tools/soil.py build my-app
 `dev` serves the app on `127.0.0.1:5173`, injects a `window.soil` shim, and
 reloads when files change. Use `--no-open` in scripts.
 
-For a Vite app, let `soil dev` start Vite and keep Vite's HMR:
+For React + TypeScript, or plain Vite:
 
 ```sh
-python tools/soil.py init --template vite my-app
+python tools/soil.py init --template react-ts my-app
 cd my-app
 npm install
-python /path/to/soil-sdk/tools/soil.py dev . --frontend "npm run dev"
+python /path/to/soil-sdk/tools/soil.py dev .
+python /path/to/soil-sdk/tools/soil.py build .
 ```
 
-The Vite scaffold's `vite.config.js` injects the bridge in dev only. Production
-still uses `vite build` followed by `soil build --web-dir dist`. You can use
-`--frontend-url` if the frontend listens somewhere other than the `--port` URL.
+The generated `soil.json` records the frontend commands:
+
+```json
+{
+  "build": { "command": "npm run build", "webDir": "dist", "entry": "index.html" },
+  "dev": { "command": "npm run dev", "url": "http://127.0.0.1:5173/" }
+}
+```
+
+`soil dev` starts the configured dev command and keeps Vite's HMR. `soil build`
+runs the configured build command, stages `webDir`, and packs it. These commands
+run on the development host only; the packaged runtime and installer never
+execute them. The Vite scaffolds inject the bridge in dev only and set a relative
+production base so bundled assets work under `soil://app/`. Use
+`--frontend-url` if the frontend listens somewhere other than the configured
+URL.
 
 ## Commands
 
 | Command | Purpose |
 |---------|---------|
-| `init DIR` | Scaffold an app (`--template vanilla` or `--template vite`). |
-| `dev DIR` | Serve a live preview, or start a frontend dev server with `--frontend CMD`. |
+| `init DIR` | Scaffold an app (`--template vanilla`, `vite`, or `react-ts`). |
+| `dev DIR` | Serve a live preview, or start the configured/explicit frontend dev server. |
 | `build DIR` | Validate, pack and verify a package. Add `--sign KEY` to sign. |
 | `run DIR\|FILE.sol` | Build if needed, then invoke the Soil runtime. |
 | `verify FILE.sol` | Check format, digest and signature. |
@@ -41,20 +55,26 @@ still uses `vite build` followed by `soil build --web-dir dist`. You can use
 
 ## Frontend build tools
 
-`soil build` can stage a built web directory. This is the supported path for
-Vite, React, Svelte, and any other tool that emits static files:
+`soil build` can run a frontend build and stage its static output. This is the
+supported path for Vite, React, Svelte, and any other tool that emits files:
 
 ```sh
-npm run build
+python tools/soil.py build . --frontend-build "npm run build" --web-dir dist
+python tools/soil.py build . --frontend-build auto --web-dir dist
 python tools/soil.py build . --web-dir dist
-python tools/soil.py build . --web-dir dist --entry index.html
 ```
 
-The CLI copies `dist/` into the package's `web/` directory and rewrites the
-packaged manifest entry. The source manifest still points at `web/index.html` for
-normal development.
+`--frontend-build` without a value auto-detects `package.json`'s `scripts.build`
+and the lockfile (`npm`, `pnpm`, `yarn`, or `bun`). With a `build` section in
+`soil.json`, plain `soil build .` runs it automatically. Use `--no-build` to
+package an existing `webDir` without rerunning the frontend build. CLI flags
+override manifest values.
 
-Preview a built output without repacking:
+The CLI copies the output directory into the package's `web/` directory and
+rewrites the packaged manifest entry. The source manifest still points at
+`index.html` for normal development.
+
+Preview a built output without repacking or starting the dev command:
 
 ```sh
 python tools/soil.py dev . --web-dir dist

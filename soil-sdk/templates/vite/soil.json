@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "id": "org.soil.__SLUG__",
+  "id": "__ID__",
   "name": "__NAME__",
   "version": "0.1.0",
   "kind": "webapp",
@@ -13,5 +13,14 @@
   },
   "permissions": [
     "notifications"
-  ]
+  ],
+  "build": {
+    "command": "npm run build",
+    "webDir": "dist",
+    "entry": "index.html"
+  },
+  "dev": {
+    "command": "npm run dev",
+    "url": "http://127.0.0.1:5173/"
+  }
 }

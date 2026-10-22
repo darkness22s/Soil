@@ -27,10 +27,11 @@ function soilDevBridge() {
   };
 }
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  base: command === "build" ? "./" : "/",
   plugins: [soilDevBridge()],
   build: {
     outDir: "dist",
     emptyOutDir: true
   }
-});
+}));

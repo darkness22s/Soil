@@ -3,11 +3,11 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$msi = Join-Path $PSScriptRoot "..\dist\Boxify-0.1.1-x64.msi"
+$msi = Join-Path $PSScriptRoot "..\dist\Soil-0.2.0-x64.msi"
 
 Push-Location $PSScriptRoot
 try {
-    & $Wix build "Boxify.wxs" -arch x64 -o $msi
+    & $Wix build "Soil.wxs" -arch x64 -o $msi
     if ($LASTEXITCODE -ne 0) {
         throw "WiX build failed with exit code $LASTEXITCODE"
     }

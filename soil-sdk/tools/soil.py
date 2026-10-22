@@ -3,7 +3,7 @@
 
 The CLI intentionally stays close to the existing .sol format:
 
-  init     scaffold a vanilla or Vite app
+  init     scaffold a vanilla, Vite, or React+TS app
   dev      localhost preview, or a frontend dev server, with the window.soil shim
   build    validate, pack and optionally sign a .sol package
   run      build (if needed) and hand off to the Soil runtime
@@ -65,6 +65,15 @@ def load_manifest(app_dir):
     return soilmk.read_manifest(str(app_dir))
 
 
+def manifest_section(manifest, key):
+    value = manifest.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        die("manifest.%s must be an object" % key)
+    return value
+
+
 def resolve_output(app_dir, manifest, requested):
     if requested:
         out = Path(requested).expanduser()
@@ -114,15 +123,13 @@ def cmd_init(args):
 
     soilmk.solid_png(str(target / "icon.png"))
     manifest = load_manifest(target)
-    if args.template == "vite":
-        dev_dir = target / "dev"
-        dev_dir.mkdir(exist_ok=True)
-        (dev_dir / "soil-bridge.js").write_text(bridge_script(manifest), encoding="utf-8")
+    if args.template in ("vite", "react-ts"):
+        write_dev_bridge(target, manifest)
     info("scaffolded %s" % target)
     info("id: %s" % app_id)
     dev_cmd = 'python "%s" dev "%s"' % (HERE / "soil.py", target)
-    if args.template == "vite":
-        info('next: npm install; %s --frontend "npm run dev"' % dev_cmd)
+    if args.template in ("vite", "react-ts"):
+        info("next: npm install; %s" % dev_cmd)
     else:
         info("next: %s" % dev_cmd)
     return 0
@@ -151,18 +158,74 @@ def stage_web(app_dir, manifest, web_dir, entry):
         raise
 
 
+def detect_frontend_command(app_dir):
+    pkg_path = app_dir / "package.json"
+    if not pkg_path.is_file():
+        die("--frontend-build auto needs package.json in %s" % app_dir)
+    try:
+        pkg = json.loads(pkg_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        die("invalid package.json: %s" % exc)
+    scripts = pkg.get("scripts")
+    if not isinstance(scripts, dict) or not isinstance(scripts.get("build"), str):
+        die("package.json has no scripts.build")
+    if (app_dir / "pnpm-lock.yaml").is_file():
+        return "pnpm run build"
+    if (app_dir / "yarn.lock").is_file():
+        return "yarn build"
+    if (app_dir / "bun.lockb").is_file() or (app_dir / "bun.lock").is_file():
+        return "bun run build"
+    return "npm run build"
+
+
+def run_frontend_build(app_dir, command):
+    info("frontend build: %s" % command)
+    try:
+        rc = subprocess.call(command, cwd=str(app_dir), shell=True)
+    except OSError as exc:
+        die("could not run frontend build: %s" % exc)
+    if rc != 0:
+        die("frontend build failed (exit %d)" % rc, rc or 1)
+    info("frontend build: complete")
+
+
 def cmd_build(args):
     app_dir = app_dir_from_arg(args.appdir)
     manifest = load_manifest(app_dir)
+    build_cfg = manifest_section(manifest, "build")
     out = resolve_output(app_dir, manifest, args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
+
+    frontend_build = getattr(args, "frontend_build", None)
+    if frontend_build == "auto":
+        frontend_build = detect_frontend_command(app_dir)
+    if frontend_build is None:
+        frontend_build = build_cfg.get("command")
+    web_dir = args.web_dir or build_cfg.get("webDir")
+    entry = args.entry or build_cfg.get("entry") or "index.html"
+
+    if frontend_build is not None and not isinstance(frontend_build, str):
+        die("build.command must be a string")
+    if web_dir is not None and not isinstance(web_dir, str):
+        die("build.webDir must be a string")
+    if not isinstance(entry, str):
+        die("build.entry must be a string")
+
+    if getattr(args, "no_build", False):
+        if frontend_build:
+            info("frontend build: skipped (--no-build)")
+    elif frontend_build:
+        run_frontend_build(app_dir, frontend_build)
+        if not web_dir and (app_dir / "dist" / "index.html").is_file():
+            web_dir = "dist"
+
     staging = None
     pack_dir = app_dir
-    if getattr(args, "web_dir", None):
-        staging = stage_web(app_dir, manifest, args.web_dir, args.entry or "index.html")
+    if web_dir:
+        staging = stage_web(app_dir, manifest, web_dir, entry)
         pack_dir = staging
     elif (app_dir / "dist" / "index.html").is_file():
-        info("note: dist/index.html exists; use --web-dir dist to package built output")
+        info("note: dist/index.html exists; add build.webDir to soil.json or use --web-dir dist")
 
     try:
         try:
@@ -205,6 +268,8 @@ def cmd_run(args):
             verify=True,
             web_dir=args.web_dir,
             entry=args.entry,
+            frontend_build=args.frontend_build,
+            no_build=args.no_build,
         )
         rc = cmd_build(build_args)
         if rc:
@@ -264,10 +329,18 @@ def cmd_doctor(args):
         info("cryptography: missing (needed only for signing)")
     soil_bin = shutil.which("soil")
     info("soil runtime: %s" % (soil_bin or "not on PATH"))
+    info("node: %s" % (shutil.which("node") or "not on PATH"))
+    info("npm: %s" % (shutil.which("npm") or "not on PATH"))
     if args.appdir:
         app_dir = app_dir_from_arg(args.appdir)
         manifest = load_manifest(app_dir)
         info("manifest: %s (%s %s)" % (manifest["id"], manifest["name"], manifest["version"]))
+        build_cfg = manifest_section(manifest, "build")
+        dev_cfg = manifest_section(manifest, "dev")
+        if build_cfg.get("command"):
+            info("frontend build: %s" % build_cfg["command"])
+        if dev_cfg.get("command"):
+            info("frontend dev: %s" % dev_cfg["command"])
     return 0
 
 
@@ -415,6 +488,14 @@ def bridge_script(manifest):
     encoded = json.dumps(manifest, ensure_ascii=False)
     encoded = encoded.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
     return BRIDGE_JS.replace("__MANIFEST__", encoded)
+
+
+def write_dev_bridge(app_dir, manifest):
+    dev_dir = app_dir / "dev"
+    dev_dir.mkdir(exist_ok=True)
+    path = dev_dir / "soil-bridge.js"
+    path.write_text(bridge_script(manifest), encoding="utf-8")
+    return path
 
 
 def inject_dev_html(text):
@@ -636,12 +717,17 @@ def cmd_dev(args):
     manifest = load_manifest(app_dir)
     if not manifest.get("entry"):
         die("dev requires a package with an entry (webapp or webapp+native)")
-    if args.frontend:
-        if args.web_dir:
-            die("--frontend cannot be combined with --web-dir")
-        url = args.frontend_url or "http://127.0.0.1:%d/" % args.port
+    dev_cfg = manifest_section(manifest, "dev")
+    frontend_cmd = args.frontend or dev_cfg.get("command")
+    if args.frontend and args.web_dir:
+        die("--frontend cannot be combined with --web-dir")
+    if frontend_cmd and not args.web_dir:
+        if not isinstance(frontend_cmd, str):
+            die("dev.command must be a string")
+        url = args.frontend_url or dev_cfg.get("url") or "http://127.0.0.1:%d/" % args.port
+        write_dev_bridge(app_dir, manifest)
         try:
-            return run_frontend_dev(app_dir, args.frontend, url, args.no_open)
+            return run_frontend_dev(app_dir, frontend_cmd, url, args.no_open)
         except KeyboardInterrupt:
             info("stopping")
             return 0
@@ -691,7 +777,7 @@ def build_parser():
 
     p = sub.add_parser("init", help="scaffold a new app")
     p.add_argument("dir", nargs="?", default=".")
-    p.add_argument("--template", default="vanilla", choices=("vanilla", "vite"))
+    p.add_argument("--template", default="vanilla", choices=("vanilla", "vite", "react-ts"))
     p.add_argument("--name", help="display name (default: directory name)")
     p.set_defaults(func=cmd_init)
 
@@ -705,7 +791,7 @@ def build_parser():
     p.add_argument(
         "--frontend",
         metavar="CMD",
-        help='run an external frontend dev server, for example: "npm run dev"',
+        help='override the configured frontend dev command, for example: "npm run dev"',
     )
     p.add_argument("--frontend-url", help="URL to wait for with --frontend (default: local port)")
     p.set_defaults(func=cmd_dev)
@@ -717,6 +803,14 @@ def build_parser():
     p.add_argument("--compress", choices=("gzip", "none"), default="gzip")
     p.add_argument("--web-dir", help="stage a built web output directory (for example: dist)")
     p.add_argument("--entry", help="entry file relative to --web-dir (default: index.html)")
+    p.add_argument(
+        "--frontend-build",
+        nargs="?",
+        const="auto",
+        metavar="CMD",
+        help="run a frontend build before packing; omit CMD to auto-detect package.json",
+    )
+    p.add_argument("--no-build", action="store_true", help="skip the configured frontend build")
     p.add_argument("--no-verify", action="store_false", dest="verify", default=True)
     p.set_defaults(func=cmd_build)
 
@@ -727,6 +821,14 @@ def build_parser():
     p.add_argument("--compress", choices=("gzip", "none"), default="gzip")
     p.add_argument("--web-dir", help="stage a built web output directory")
     p.add_argument("--entry", help="entry file relative to --web-dir")
+    p.add_argument(
+        "--frontend-build",
+        nargs="?",
+        const="auto",
+        metavar="CMD",
+        help="run a frontend build before packing; omit CMD to auto-detect package.json",
+    )
+    p.add_argument("--no-build", action="store_true", help="skip the configured frontend build")
     p.add_argument("--debug", action="store_true")
     p.add_argument("--print-only", action="store_true", help="build and print the package path")
     p.add_argument("--soil-bin", help="path to the Soil runtime binary")

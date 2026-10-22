@@ -11,7 +11,7 @@ using System.Security.Principal;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 
-namespace Boxify;
+namespace Soil;
 
 public sealed class VmManager
 {
@@ -25,10 +25,8 @@ public sealed class VmManager
 
     private readonly string m_baseDir;
     private readonly string m_imagesDir;
-    private readonly string m_stateDir;
-    private readonly string m_logDir;
+    private readonly SoilPaths m_paths;
     private readonly string m_vmhost;
-    private readonly string m_storePath;
     private readonly string m_sshExe;
     private readonly string m_sshKeyPath;
     private readonly object m_lock = new();
@@ -38,20 +36,15 @@ public sealed class VmManager
     internal static readonly ImageCodecInfo? JpegCodec =
         ImageCodecInfo.GetImageEncoders().FirstOrDefault(c => c.FormatID == ImageFormat.Jpeg.Guid);
 
-    public VmManager(string baseDir)
+    public VmManager(string baseDir, SoilPaths paths)
     {
         m_baseDir = baseDir;
-        m_imagesDir = Path.Combine(baseDir, "images");
-        m_stateDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Boxify");
-        m_logDir = Path.Combine(m_stateDir, "logs");
+        m_paths = paths;
+        m_paths.Ensure();
+        m_imagesDir = ResolveImagesDir(baseDir);
         m_vmhost = Path.Combine(baseDir, "engine", "vmhost.exe");
-        m_storePath = Path.Combine(m_stateDir, "vms.json");
         m_sshExe = FindSshExecutable();
         m_sshKeyPath = PrepareSshKey();
-
-        Directory.CreateDirectory(m_stateDir);
-        Directory.CreateDirectory(m_logDir);
 
         m_records = LoadRecords();
         foreach (var record in m_records)
@@ -59,6 +52,8 @@ public sealed class VmManager
 
         _ = Task.Run(StatsLoopAsync);
     }
+
+    public SoilPaths Home => m_paths;
 
     public IReadOnlyList<VmDto> List()
     {
@@ -100,6 +95,8 @@ public sealed class VmManager
                 Os = "Soil Desktop",
                 CreatedUtc = DateTime.UtcNow
             };
+            m_paths.EnsureMachine(record.Id);
+            WriteMachineRecordLocked(record);
             m_records.Add(record);
             m_runtimes[record.Id] = new VmRuntime(record);
             SaveRecordsLocked();
@@ -186,6 +183,7 @@ public sealed class VmManager
             {
                 m_records.Remove(record);
                 SaveRecordsLocked();
+                DeleteMachineFolder(record.Id);
                 return true;
             }
             if (runtime.Deleting)
@@ -268,18 +266,23 @@ public sealed class VmManager
                 SaveRecordsLocked();
             }
 
-            try
-            {
-                var log = Path.Combine(m_logDir, id + ".log");
-                if (File.Exists(log))
-                    File.Delete(log);
-            }
-            catch
-            {
-            }
+            DeleteMachineFolder(id);
         }
 
         return true;
+    }
+
+    private void DeleteMachineFolder(string id)
+    {
+        try
+        {
+            var dir = m_paths.MachineDir(id);
+            if (Directory.Exists(dir))
+                Directory.Delete(dir, true);
+        }
+        catch
+        {
+        }
     }
 
     public void StopAll()
@@ -494,10 +497,11 @@ public sealed class VmManager
             psi.ArgumentList.Add(Path.Combine(m_imagesDir, "soil.squashfs"));
             psi.ArgumentList.Add("--ram");
             psi.ArgumentList.Add(runtime.Record.RamMb.ToString());
+            Directory.CreateDirectory(m_paths.MachineLogDir(runtime.Record.Id));
             psi.ArgumentList.Add("--cmdline");
             psi.ArgumentList.Add("console=ttyS0 quiet loglevel=3 acpi=off noapic nolapic mitigations=off nozswap");
             psi.ArgumentList.Add("--log");
-            psi.ArgumentList.Add(Path.Combine(m_logDir, runtime.Record.Id + ".log"));
+            psi.ArgumentList.Add(m_paths.MachineLogPath(runtime.Record.Id));
             psi.ArgumentList.Add("--no-ui");
             var sshPort = 0;
             if (!string.IsNullOrEmpty(m_sshKeyPath) && File.Exists(m_sshKeyPath))
@@ -552,7 +556,7 @@ public sealed class VmManager
                 try
                 {
                     map = MemoryMappedFile.OpenExisting(
-                        "Local\\BoxifyFb_" + token, MemoryMappedFileRights.ReadWrite);
+                        "Local\\SoilFb_" + token, MemoryMappedFileRights.ReadWrite);
                     break;
                 }
                 catch (FileNotFoundException)
@@ -566,7 +570,7 @@ public sealed class VmManager
             view = map.CreateViewAccessor(0, SharedSize, MemoryMappedFileAccess.ReadWrite);
 
             pipe = new NamedPipeClientStream(
-                ".", "BoxifyInput_" + token, PipeDirection.Out, PipeOptions.Asynchronous);
+                ".", "SoilInput_" + token, PipeDirection.Out, PipeOptions.Asynchronous);
             try
             {
                 await pipe.ConnectAsync(10000, ct);
@@ -930,59 +934,137 @@ public sealed class VmManager
 
     private List<VmRecord> LoadRecords()
     {
-        try
+        var records = new List<VmRecord>();
+        var hasIndex = File.Exists(m_paths.MachinesIndexPath);
+        var loadedIndex = false;
+        if (hasIndex)
         {
-            if (File.Exists(m_storePath))
+            try
             {
                 var store = JsonSerializer.Deserialize<StoreFile>(
-                    File.ReadAllText(m_storePath), JsonOptions.Web);
+                    File.ReadAllText(m_paths.MachinesIndexPath), JsonOptions.Web);
                 if (store?.Vms is not null)
-                    return store.Vms;
+                {
+                    records.AddRange(store.Vms);
+                    loadedIndex = true;
+                }
+            }
+            catch
+            {
             }
         }
-        catch
+
+        if (!loadedIndex)
         {
+            var legacy = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Boxify");
+            var oldStore = Path.Combine(legacy, "vms.json");
+            try
+            {
+                if (File.Exists(oldStore))
+                {
+                    var store = JsonSerializer.Deserialize<StoreFile>(
+                        File.ReadAllText(oldStore), JsonOptions.Web);
+                    if (store?.Vms is not null)
+                        records.AddRange(store.Vms);
+                }
+            }
+            catch
+            {
+            }
+
+            foreach (var record in records)
+            {
+                if (!SoilPaths.IsSafeId(record.Id))
+                    continue;
+                m_paths.EnsureMachine(record.Id);
+                var oldLog = Path.Combine(legacy, "logs", record.Id + ".log");
+                var newLog = m_paths.MachineLogPath(record.Id);
+                try
+                {
+                    if (File.Exists(oldLog) && !File.Exists(newLog))
+                        File.Copy(oldLog, newLog);
+                }
+                catch
+                {
+                }
+            }
         }
 
-        var seeded = new List<VmRecord>
-        {
-            NewSeed("workstation", 1024, "m", 80),
-            NewSeed("sandbox", 512, "s", 40),
-            NewSeed("build", 2048, "l", 160)
-        };
-        try
-        {
-            File.WriteAllText(m_storePath, JsonSerializer.Serialize(
-                new StoreFile { Vms = seeded }, JsonOptions.Web));
-        }
-        catch
-        {
-        }
-        return seeded;
+        records = records
+            .Where(record => SoilPaths.IsSafeId(record.Id))
+            .GroupBy(record => record.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+
+        foreach (var record in records)
+            EnsureRecordFolder(record);
+
+        if (!loadedIndex)
+            WriteMachineIndex(records);
+
+        return records;
     }
 
-    private static VmRecord NewSeed(string name, int ram, string size, int disk) => new()
+    private void EnsureRecordFolder(VmRecord record)
     {
-        Id = Guid.NewGuid().ToString("N"),
-        Name = "soil-" + name,
-        RamMb = ram,
-        Cpu = 1,
-        DiskGb = disk,
-        Size = size,
-        Os = "Soil Desktop",
-        CreatedUtc = DateTime.UtcNow
-    };
+        if (!SoilPaths.IsSafeId(record.Id))
+            return;
+        m_paths.EnsureMachine(record.Id);
+        var machineFile = m_paths.MachineConfigPath(record.Id);
+        if (!File.Exists(machineFile))
+            WriteJson(machineFile, record);
+    }
+
+    private void WriteMachineRecordLocked(VmRecord record)
+    {
+        if (!SoilPaths.IsSafeId(record.Id))
+            return;
+        m_paths.EnsureMachine(record.Id);
+        WriteJson(m_paths.MachineConfigPath(record.Id), record);
+    }
 
     private void SaveRecordsLocked()
     {
         try
         {
-            File.WriteAllText(m_storePath, JsonSerializer.Serialize(
-                new StoreFile { Vms = m_records }, JsonOptions.Web));
+            foreach (var record in m_records)
+                WriteMachineRecordLocked(record);
+            WriteMachineIndex(m_records);
         }
         catch
         {
         }
+    }
+
+    private void WriteMachineIndex(IReadOnlyList<VmRecord> records)
+    {
+        try
+        {
+            WriteJson(m_paths.MachinesIndexPath, new StoreFile { Vms = records.ToList() });
+        }
+        catch
+        {
+        }
+    }
+
+    private static void WriteJson(string path, object value)
+    {
+        var dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir))
+            Directory.CreateDirectory(dir);
+        var temp = path + ".tmp";
+        File.WriteAllText(temp, JsonSerializer.Serialize(value, JsonOptions.Web));
+        File.Move(temp, path, true);
+    }
+
+    private string ResolveImagesDir(string baseDir)
+    {
+        var installed = Path.Combine(baseDir, "images");
+        if (Directory.Exists(installed))
+            return installed;
+        return m_paths.ImagesDir;
     }
 
     private static int ReadInt(JsonElement element, string name)
@@ -1029,11 +1111,10 @@ public sealed class VmManager
     {
         try
         {
-            var dir = Path.Combine(m_stateDir, "ssh");
-            Directory.CreateDirectory(dir);
-            var path = Path.Combine(dir, "id_ed25519");
+            Directory.CreateDirectory(m_paths.SshDir);
+            var path = m_paths.SshKeyPath;
             using var stream = typeof(VmManager).Assembly
-                .GetManifestResourceStream("Boxify.keys.id_ed25519");
+                .GetManifestResourceStream("Soil.keys.id_ed25519");
             if (stream is not null)
             {
                 using var memory = new MemoryStream();
@@ -1042,6 +1123,16 @@ public sealed class VmManager
                 if (!File.Exists(path) || !File.ReadAllBytes(path).SequenceEqual(bytes))
                     File.WriteAllBytes(path, bytes);
             }
+
+            if (!File.Exists(path))
+            {
+                var legacy = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Boxify", "ssh", "id_ed25519");
+                if (File.Exists(legacy))
+                    File.Copy(legacy, path);
+            }
+
             if (!File.Exists(path))
                 return "";
             RestrictKeyPermissions(path);

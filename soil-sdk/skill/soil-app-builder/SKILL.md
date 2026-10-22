@@ -11,7 +11,7 @@ Soil WebKitGTK runtime. No Node or Chromium is shipped in the app.
 ## Prerequisites
 
 * Python 3.8+ (only `cryptography` for signing). Node/npm only if using the
-  optional Vite template.
+  optional Vite or React+TypeScript templates.
 * `soil-sdk/tools/soil.py` (scaffold/dev/build/run) and
   `soil-sdk/tools/soilmk.py` (low-level pack/sign/verify); `docs/` for reference.
 * A Soil system, or any Linux with GTK3 + WebKitGTK 4.1, to test the runtime.
@@ -33,6 +33,9 @@ Soil WebKitGTK runtime. No Node or Chromium is shipped in the app.
 
    Set only the permissions you use. Each ungranted call rejects.
 
+   For Vite/React apps, add host-side build metadata so `soil build .` runs the
+   frontend build automatically:
+
    ```json
    {
      "schema": 1,
@@ -40,11 +43,13 @@ Soil WebKitGTK runtime. No Node or Chromium is shipped in the app.
      "name": "Notes",
      "version": "1.0.0",
      "kind": "webapp",
-     "entry": "web/index.html",
+     "entry": "index.html",
      "icon": "icon.png",
      "window": { "width": 1000, "height": 700, "resizable": true },
      "permissions": ["clipboard", "notifications", "dialogs"],
-     "min_ram_mb": 96
+     "min_ram_mb": 96,
+     "build": { "command": "npm run build", "webDir": "dist", "entry": "index.html" },
+     "dev": { "command": "npm run dev", "url": "http://127.0.0.1:5173/" }
    }
    ```
 
@@ -76,16 +81,20 @@ Soil WebKitGTK runtime. No Node or Chromium is shipped in the app.
    python tools/soil.py verify Notes.sol --key my-key.pub.pem
    ```
 
-   For Vite/React-style output, scaffold with `--template vite` (it injects the
-   dev bridge) and stage the normal build:
+   For React + TypeScript, use the scaffold that already includes React,
+   TypeScript, Vite, the typed `window.soil` helper, and manifest build/dev
+   commands:
 
    ```sh
-   python tools/soil.py init --template vite my-app
+   python tools/soil.py init --template react-ts my-app
    cd my-app && npm install
-   python /path/to/soil-sdk/tools/soil.py dev . --frontend "npm run dev"
-   npm run build
-   python /path/to/soil-sdk/tools/soil.py build . --web-dir dist
+   python /path/to/soil-sdk/tools/soil.py dev .
+   python /path/to/soil-sdk/tools/soil.py build . --sign my-key.key.json
    ```
+
+   The `vite` template is the same workflow without React. For another frontend
+   builder, run it explicitly:
+   `python tools/soil.py build . --frontend-build "npm run build" --web-dir dist`.
 
    `build` validates paths, rejects symlinks/hardlinks/`..`, copies the manifest
    into the payload, pads the header manifest to 512 bytes and writes the digest

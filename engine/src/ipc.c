@@ -1,9 +1,9 @@
 /*
- * Soil VM engine - host IPC transport for the Boxify app.
+ * Soil VM engine - host IPC transport for the Soil app.
  *
  * Two channels, both keyed by a caller-supplied token:
- *   Local\BoxifyFb_<token>     shared framebuffer (header + 1024x768 BGRA)
- *   \\.\pipe\BoxifyInput_<token> input messages (fixed 16-byte records)
+ *   Local\SoilFb_<token>     shared framebuffer (header + 1024x768 BGRA)
+ *   \\.\pipe\SoilInput_<token> input messages (fixed 16-byte records)
  *
  * The app runs vmhost with --no-ui --ipc <token>; this module then owns the
  * frame pump and the input reader instead of viewer.c.
@@ -93,7 +93,7 @@ static unsigned __stdcall VhIpcInputThread(void *pvArg)
     const char *pszToken = (const char *)pvArg;
     VH_VM *pVm = g_pVm;
     char szPipe[160];
-    sprintf(szPipe, "\\\\.\\pipe\\BoxifyInput_%s", pszToken);
+    sprintf(szPipe, "\\\\.\\pipe\\SoilInput_%s", pszToken);
 
     for (;;)
     {
@@ -172,7 +172,7 @@ static unsigned __stdcall VhIpcFrameThread(void *pvArg)
 void VhIpcStart(VH_VM *pVm, const char *pszToken)
 {
     char szMap[160];
-    sprintf(szMap, "Local\\BoxifyFb_%s", pszToken);
+    sprintf(szMap, "Local\\SoilFb_%s", pszToken);
 
     g_pVm = pVm;
     HANDLE hMap = CreateFileMappingA(

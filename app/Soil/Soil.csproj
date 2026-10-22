@@ -6,15 +6,15 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>Boxify</AssemblyName>
-    <RootNamespace>Boxify</RootNamespace>
-    <Version>0.1.1</Version>
+    <AssemblyName>Soil</AssemblyName>
+    <RootNamespace>Soil</RootNamespace>
+    <Version>0.2.0</Version>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>false</PublishSingleFile>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <ApplicationIcon>assets\boxify.ico</ApplicationIcon>
+    <ApplicationIcon>assets\soil.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
@@ -26,6 +26,7 @@
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
     <EmbeddedResource Include="..\..\soil-keys\id_ed25519"
-                      LogicalName="Boxify.keys.id_ed25519" />
+                      Condition="Exists('..\..\soil-keys\id_ed25519')"
+                      LogicalName="Soil.keys.id_ed25519" />
   </ItemGroup>
 </Project>

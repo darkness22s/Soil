@@ -1,37 +1,43 @@
 # __NAME__
 
 A Vite app packaged by the Soil SDK. The dev server injects the `window.soil`
-bridge; the production build is packed with `soil build --web-dir dist`.
+bridge; production output is packed with `soil build`.
 
 ## Develop
 
 ```sh
 npm install
-python /path/to/soil-sdk/tools/soil.py dev . --frontend "npm run dev"
+python /path/to/soil-sdk/tools/soil.py dev .
 ```
 
-`soil dev` starts Vite, waits for it, and opens the app. Vite's HMR stays
-available. The bridge is injected only in dev (`vite.config.js`); it is not
-included in the production output.
+`soil dev` reads `dev.command` from `soil.json`, starts Vite, waits for it, and
+opens the app. Vite's HMR stays available. The bridge is injected only in dev
+(`vite.config.js`); it is not included in the production output.
 
 From the SDK root you can run the same command with a path:
 
 ```sh
-python tools/soil.py dev path/to/this/app --frontend "npm run dev"
+python tools/soil.py dev path/to/this/app
 ```
 
 ## Build
 
 ```sh
-npm run build
-python /path/to/soil-sdk/tools/soil.py build . --web-dir dist
+python /path/to/soil-sdk/tools/soil.py build .
 ```
 
-The package is written as `__OUT__` next to this file. To sign it:
+`soil build` runs `build.command` (`npm run build`), stages `build.webDir`
+(`dist`), and writes `__OUT__` next to this file. To sign it:
 
 ```sh
 python /path/to/soil-sdk/tools/soil.py keygen soil-sign
-python /path/to/soil-sdk/tools/soil.py build . --web-dir dist --sign soil-sign.key.json
+python /path/to/soil-sdk/tools/soil.py build . --sign soil-sign.key.json
+```
+
+Skip the frontend build when `dist/` is already current:
+
+```sh
+python /path/to/soil-sdk/tools/soil.py build . --no-build
 ```
 
 The generated SDK CLI keeps a copy of the dev bridge in `dev/soil-bridge.js`.

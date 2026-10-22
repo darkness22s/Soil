@@ -67,7 +67,30 @@
         }
       ]
     },
-    "min_ram_mb": { "type": "integer", "minimum": 32, "maximum": 65536 }
+    "min_ram_mb": { "type": "integer", "minimum": 32, "maximum": 65536 },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "webDir": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._/-]+$"
+        },
+        "entry": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._/-]+$"
+        }
+      }
+    },
+    "dev": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "url": { "type": "string", "minLength": 1, "maxLength": 300 }
+      }
+    }
   },
   "allOf": [
     {

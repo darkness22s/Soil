@@ -1,0 +1,86 @@
+param(
+    [string]$Configuration = "Release",
+    [string]$ImagesDir = "",
+    [switch]$SkipEngine,
+    [switch]$SkipMsi
+)
+
+$ErrorActionPreference = "Stop"
+$app = $PSScriptRoot
+$root = Split-Path -Parent $app
+$out = Join-Path $app "dist\Soil"
+
+if (-not $SkipEngine) {
+    & (Join-Path $root "engine\build.ps1")
+    if (-not $?) {
+        throw "Engine build failed."
+    }
+}
+
+New-Item -ItemType Directory -Force -Path $out | Out-Null
+& dotnet publish (Join-Path $app "Soil\Soil.csproj") `
+    -c $Configuration -r win-x64 --self-contained true -o $out --nologo
+if ($LASTEXITCODE -ne 0) {
+    throw "App publish failed."
+}
+
+$engineDir = Join-Path $out "engine"
+New-Item -ItemType Directory -Force -Path $engineDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $root "engine\bin\vmhost.exe") `
+    -Destination (Join-Path $engineDir "vmhost.exe") -Force
+
+if ([string]::IsNullOrWhiteSpace($ImagesDir)) {
+    $candidates = @(
+        (Join-Path $app "images"),
+        (Join-Path $app "dist\Boxify\images"),
+        (Join-Path $out "images")
+    )
+    $ImagesDir = $candidates | Where-Object {
+        Test-Path -LiteralPath (Join-Path $_ "soil.squashfs")
+    } | Select-Object -First 1
+}
+if ([string]::IsNullOrWhiteSpace($ImagesDir)) {
+    throw "Guest images not found. Pass -ImagesDir with vmlinuz64, core2.gz, and soil.squashfs."
+}
+$imagesSource = $ImagesDir
+if (-not (Test-Path -LiteralPath $imagesSource)) {
+    throw "Guest images not found at $imagesSource."
+}
+$imagesDir = Join-Path $out "images"
+New-Item -ItemType Directory -Force -Path $imagesDir | Out-Null
+if ((Resolve-Path -LiteralPath $imagesSource).Path -ne (Resolve-Path -LiteralPath $imagesDir).Path) {
+    Copy-Item -Path (Join-Path $imagesSource "*") -Destination $imagesDir -Force
+}
+
+$readme = @"
+Soil 0.2.0 - private local build
+
+Private build. Not for public release or upload.
+
+Requirements
+- Windows 10/11 x64
+- Microsoft Edge WebView2 Runtime (usually included with Windows 11)
+- Hardware virtualization and the Windows Hypervisor Platform feature enabled
+
+Use
+- Launch Soil from the Start Menu.
+- Create machines with +, start them with the power switch, and click the screen to capture input.
+- Browse machines, apps, skills, cache, and logs from Files.
+- Machine data lives in %USERPROFILE%\.soil.
+
+Uninstall
+- Settings > Apps > Installed apps > Soil
+- Your files in %USERPROFILE%\.soil are not removed automatically.
+
+Packaging
+- Self-contained .NET 8 x64 application.
+- Bundled VM engine and guest images.
+- No telemetry, external fonts, or cloud services.
+"@
+Set-Content -LiteralPath (Join-Path $out "README.txt") -Value $readme -Encoding UTF8
+
+if (-not $SkipMsi) {
+    & (Join-Path $app "installer\build-msi.ps1")
+}
+
+Write-Host "Build ready: $out"

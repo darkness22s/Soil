@@ -3,16 +3,26 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Machines — Boxify</title>
-<script>try{var t=localStorage.getItem('boxify-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<title>Soil</title>
+<script>try{var t=localStorage.getItem('soil-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div class="win" id="win">
 <aside class="side">
-<div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="2" width="28" height="28" rx="8" fill="currentColor"/><path d="M19.75 10.5A7.5 7.5 0 1 1 12.25 10.5" fill="none" class="brand-ink" stroke-width="2.8" stroke-linecap="round"/><path d="M16 8.5v7" class="brand-ink" stroke-width="2.8" stroke-linecap="round"/></svg><span>Boxify</span></div>
+<div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="2" width="28" height="28" rx="8" fill="currentColor"/><path d="M19.75 10.5A7.5 7.5 0 1 1 12.25 10.5" fill="none" class="brand-ink" stroke-width="2.8" stroke-linecap="round"/><path d="M16 8.5v7" class="brand-ink" stroke-width="2.8" stroke-linecap="round"/></svg><span>Soil</span></div>
+<nav class="tabs" aria-label="Sections">
+<button class="tab active" id="tab-machines" type="button">Machines</button>
+<button class="tab" id="tab-files" type="button">Files</button>
+</nav>
+<div class="machine-nav" id="machine-nav">
 <div class="shead"><h2>Machines</h2><button class="plus wipe" id="add" aria-label="New VM"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v11M2.5 8h11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button></div>
 <div class="list" id="list"></div>
+</div>
+<div class="files-nav" id="files-nav" hidden>
+<div class="shead"><h2>Places</h2></div>
+<div class="places" id="places"></div>
+</div>
 <button class="settings wipe" id="open-set">Settings</button>
 </aside>
 <main class="main">
@@ -26,6 +36,28 @@
 <article class="card" data-k="cpu"><div class="ch"><h3>CPU</h3><div><div class="big" data-big>—</div><div class="sub" data-sub></div></div></div><div class="plot"></div><p class="empty">Start this machine to see its charts</p></article>
 <article class="card mem" data-k="mem"><div class="ch"><h3>Memory</h3><div><div class="big" data-big>—</div><div class="sub" data-sub></div></div></div><div class="plot"></div><p class="empty">Start this machine to see its charts</p></article>
 <article class="card net" data-k="net"><div class="ch"><h3>Network</h3><div><div class="big" data-big>—</div><div class="sub" data-sub></div></div></div><div class="plot"></div><p class="empty">Start this machine to see its charts</p></article>
+</section>
+<section class="files" id="files" hidden>
+<header class="files-head">
+<div class="files-title"><h2>Files</h2><nav class="crumbs" id="crumbs" aria-label="Soil path"></nav></div>
+<div class="files-actions">
+<button class="q sm" id="file-up" type="button">Up</button>
+<button class="q sm" id="file-refresh" type="button">Refresh</button>
+<button class="btn sm" id="file-open" type="button">Open folder</button>
+</div>
+</header>
+<div class="files-body">
+<div class="file-list" id="file-list" tabindex="0"></div>
+<aside class="preview" id="preview">
+<div class="preview-empty" id="preview-empty">Select a file to preview it.</div>
+<div class="preview-card" id="preview-card" hidden>
+<div class="preview-head"><span class="preview-kind" id="preview-kind"></span><h3 id="preview-name"></h3><span class="mono" id="preview-meta"></span></div>
+<pre id="preview-text" hidden></pre>
+<img id="preview-image" alt="" hidden>
+<div class="preview-actions"><button class="q sm" id="preview-open" type="button">Open</button><button class="q sm" id="preview-reveal" type="button">Show in Explorer</button></div>
+</div>
+</aside>
+</div>
 </section>
 </main>
 </div>
@@ -56,7 +88,8 @@
 <h3>Settings</h3>
 <div class="row"><span>Dark theme</span><button class="sw" id="theme" role="switch" aria-checked="false" aria-label="Dark theme"><span class="k"></span></button></div>
 <div class="row"><span>Engine</span><span class="mono" id="engine-version">local</span></div>
-<div class="btns"><button class="btn wipe" id="close-set">Done</button></div>
+<div class="row"><span>Soil home</span><span class="mono" id="soil-home">…</span></div>
+<div class="btns"><button class="q" id="open-home" type="button">Open folder</button><button class="btn wipe" id="close-set">Done</button></div>
 </div>
 </dialog>
 <script src="app.js"></script>

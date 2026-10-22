@@ -140,6 +140,29 @@ def validate_manifest(m, app_dir):
                     errs.append("window.%s must be an integer %d..%d" % (k, lo, hi))
             if "resizable" in win and not isinstance(win["resizable"], bool):
                 errs.append("window.resizable must be a boolean")
+    build = m.get("build")
+    if build is not None:
+        if not isinstance(build, dict):
+            errs.append("build must be an object")
+        else:
+            command = build.get("command")
+            if command is not None and (not isinstance(command, str) or not command.strip()):
+                errs.append("build.command must be a non-empty string")
+            for key in ("webDir", "entry"):
+                value = build.get(key)
+                if value is not None and (not isinstance(value, str) or not safe_rel(value)):
+                    errs.append("build.%s must be a relative path" % key)
+    dev = m.get("dev")
+    if dev is not None:
+        if not isinstance(dev, dict):
+            errs.append("dev must be an object")
+        else:
+            command = dev.get("command")
+            if command is not None and (not isinstance(command, str) or not command.strip()):
+                errs.append("dev.command must be a non-empty string")
+            url = dev.get("url")
+            if url is not None and not isinstance(url, str):
+                errs.append("dev.url must be a string")
     return errs
 
 

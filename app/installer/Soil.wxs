@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Soil"
+           Manufacturer="Soil"
+           Version="0.2.0.0"
+           UpgradeCode="4B2E8DFA-B0DB-4AB3-9DA4-BA03BB415905"
+           Scope="perUser"
+           Compressed="yes"
+           Language="1033">
+    <SummaryInformation Description="Soil local machines" Manufacturer="Soil" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Soil is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Icon Id="SoilIcon" SourceFile="..\Soil\assets\soil.ico" />
+    <Property Id="ARPPRODUCTICON" Value="SoilIcon" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Soil" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ProgramMenuDir" Name="Soil" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <Files Include="..\dist\Soil\**" />
+    </ComponentGroup>
+
+    <Component Id="StartMenuShortcut" Directory="ProgramMenuDir" Guid="5A89D3C1-7B42-4E16-A6C9-2F0D8E4B7A31">
+      <Shortcut Id="StartMenuShortcut"
+                Name="Soil"
+                Description="Soil local machines"
+                Target="[INSTALLFOLDER]Soil.exe"
+                WorkingDirectory="INSTALLFOLDER"
+                Icon="SoilIcon" />
+      <RemoveFolder Id="RemoveProgramMenuDir" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\Soil" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <Feature Id="Main" Title="Soil" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+
+    <CustomAction Id="BootstrapSoilHome"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand="--bootstrap"
+                  Execute="deferred"
+                  Impersonate="yes"
+                  Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="BootstrapSoilHome" After="InstallFiles" Condition="NOT Installed" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

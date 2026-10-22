@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
@@ -9,18 +10,20 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace Boxify;
+namespace Soil;
 
 public sealed class AppServer : IDisposable
 {
     private readonly WebApplication m_app;
     private readonly VmManager m_manager;
+    private readonly SoilPaths m_paths;
 
     public string Url { get; private set; } = "";
 
-    public AppServer(VmManager manager)
+    public AppServer(VmManager manager, SoilPaths paths)
     {
         m_manager = manager;
+        m_paths = paths;
 
         var uiRoot = Path.Combine(AppContext.BaseDirectory, "ui");
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -67,6 +70,9 @@ public sealed class AppServer : IDisposable
                 return;
             }
 
+            ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
+            ctx.Response.Headers["Referrer-Policy"] = "no-referrer";
+
             await next();
         });
 
@@ -81,7 +87,21 @@ public sealed class AppServer : IDisposable
                 ctx.Context.Response.Headers.CacheControl = "no-store"
         });
 
+        MapApi();
+    }
+
+    private void MapApi()
+    {
         m_app.MapGet("/api/health", () => Results.Json(new { ok = true }, JsonOptions.Web));
+
+        m_app.MapGet("/api/info", () => Results.Json(new
+        {
+            name = "Soil",
+            version = typeof(AppServer).Assembly.GetName().Version?.ToString(3) ?? "0.2.0",
+            home = m_paths.Root,
+            schema = 1
+        }, JsonOptions.Web));
+
         m_app.MapGet("/api/vms", () => Results.Json(m_manager.List(), JsonOptions.Web));
 
         m_app.MapPost("/api/vms", async (HttpRequest req) =>
@@ -152,7 +172,111 @@ public sealed class AppServer : IDisposable
             }
             await m_manager.StreamAsync(runtime, ctx, ctx.RequestAborted);
         });
+
+        m_app.MapGet("/api/files", (string? path) =>
+        {
+            try
+            {
+                return Results.Json(SoilFiles.List(m_paths, path), JsonOptions.Web);
+            }
+            catch (Exception ex)
+            {
+                return FileError(ex);
+            }
+        });
+
+        m_app.MapGet("/api/files/content", (string? path) =>
+        {
+            try
+            {
+                return Results.Json(SoilFiles.Read(m_paths, path), JsonOptions.Web);
+            }
+            catch (Exception ex)
+            {
+                return FileError(ex);
+            }
+        });
+
+        m_app.MapGet("/api/files/raw", (HttpContext ctx, string? path) =>
+        {
+            try
+            {
+                var (full, contentType) = SoilFiles.Raw(m_paths, path);
+                ctx.Response.Headers["Content-Security-Policy"] = "sandbox";
+                ctx.Response.Headers.CacheControl = "no-store";
+                return Results.File(full, contentType, enableRangeProcessing: true);
+            }
+            catch (Exception ex)
+            {
+                return FileError(ex);
+            }
+        });
+
+        m_app.MapPost("/api/files/open", (HttpRequest req) =>
+        {
+            try
+            {
+                Open(req.Query["path"].ToString());
+                return Results.NoContent();
+            }
+            catch (Exception ex)
+            {
+                return FileError(ex);
+            }
+        });
+
+        m_app.MapPost("/api/files/reveal", (HttpRequest req) =>
+        {
+            try
+            {
+                Reveal(req.Query["path"].ToString());
+                return Results.NoContent();
+            }
+            catch (Exception ex)
+            {
+                return FileError(ex);
+            }
+        });
     }
+
+    private void Open(string path)
+    {
+        var full = m_paths.Resolve(path);
+        if (!Directory.Exists(full) && !File.Exists(full))
+            throw new FileNotFoundException("Path not found.", full);
+        Process.Start(new ProcessStartInfo(full) { UseShellExecute = true });
+    }
+
+    private void Reveal(string path)
+    {
+        var full = m_paths.Resolve(path);
+        if (!Directory.Exists(full) && !File.Exists(full))
+            throw new FileNotFoundException("Path not found.", full);
+
+        if (Directory.Exists(full))
+        {
+            Process.Start(new ProcessStartInfo(full) { UseShellExecute = true });
+            return;
+        }
+
+        var psi = new ProcessStartInfo("explorer.exe")
+        {
+            UseShellExecute = true,
+            Arguments = $"/select,\"{full}\""
+        };
+        Process.Start(psi);
+    }
+
+    private static IResult FileError(Exception ex) => ex switch
+    {
+        FileNotFoundException or DirectoryNotFoundException =>
+            Results.NotFound(new { error = "That item no longer exists." }),
+        UnauthorizedAccessException =>
+            Results.Json(new { error = "Access denied." }, statusCode: StatusCodes.Status403Forbidden),
+        ArgumentException =>
+            Results.BadRequest(new { error = ex.Message }),
+        _ => Results.Problem(ex.Message)
+    };
 
     public void Start()
     {
