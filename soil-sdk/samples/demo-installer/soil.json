@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "id": "org.soil.demoinstaller",
+  "name": "Demo Installer",
+  "version": "1.0.0",
+  "kind": "installer",
+  "description": "Demonstrates the installer package kind: payload + install hook, no web UI.",
+  "author": "Soil SDK",
+  "icon": "icon.png",
+  "permissions": [],
+  "exec": [],
+  "install": {
+    "command": "install.sh",
+    "args": [],
+    "root": false
+  },
+  "min_ram_mb": 64
+}

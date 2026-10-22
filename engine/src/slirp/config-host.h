@@ -1,0 +1,10 @@
+#ifndef QEMU_CONFIG_HOST_H
+#define QEMU_CONFIG_HOST_H
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+
+#define HOST_LONG_BITS 64
+
+#endif /* QEMU_CONFIG_HOST_H */

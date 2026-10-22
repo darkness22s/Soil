@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "id": "org.soil.frontend",
+  "name": "Frontend UI",
+  "version": "1.0.0",
+  "kind": "webapp",
+  "description": "The Soil frontend design mockup (React via bundled vendor files) packaged as a .sol app.",
+  "author": "Soil SDK",
+  "entry": "web/index.html",
+  "icon": "icon.png",
+  "window": {
+    "width": 1220,
+    "height": 780,
+    "resizable": true
+  },
+  "permissions": [],
+  "exec": [],
+  "install": null,
+  "min_ram_mb": 160
+}

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Machines — Boxify</title>
+<script>try{var t=localStorage.getItem('boxify-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="win" id="win">
+<aside class="side">
+<div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="2" width="28" height="28" rx="8" fill="currentColor"/><path d="M19.75 10.5A7.5 7.5 0 1 1 12.25 10.5" fill="none" class="brand-ink" stroke-width="2.8" stroke-linecap="round"/><path d="M16 8.5v7" class="brand-ink" stroke-width="2.8" stroke-linecap="round"/></svg><span>Boxify</span></div>
+<div class="shead"><h2>Machines</h2><button class="plus wipe" id="add" aria-label="New VM"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v11M2.5 8h11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button></div>
+<div class="list" id="list"></div>
+<button class="settings wipe" id="open-set">Settings</button>
+</aside>
+<main class="main">
+<section class="screen" id="screen" tabindex="0" aria-label="VM screen">
+<button class="expand wipe" id="expand" aria-label="Expand screen"><svg class="i-e" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><svg class="i-x" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2v4H2M10 2v4h4M10 14v-4h4M6 14v-4H2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+<img class="vm-screen" id="vmscreen" alt="Live VM screen" draggable="false">
+<div class="unavail" id="unavail">Start this machine to see its screen</div>
+<div class="hint" id="hint">Click the screen to capture the keyboard and mouse</div>
+</section>
+<section class="charts" id="charts">
+<article class="card" data-k="cpu"><div class="ch"><h3>CPU</h3><div><div class="big" data-big>—</div><div class="sub" data-sub></div></div></div><div class="plot"></div><p class="empty">Start this machine to see its charts</p></article>
+<article class="card mem" data-k="mem"><div class="ch"><h3>Memory</h3><div><div class="big" data-big>—</div><div class="sub" data-sub></div></div></div><div class="plot"></div><p class="empty">Start this machine to see its charts</p></article>
+<article class="card net" data-k="net"><div class="ch"><h3>Network</h3><div><div class="big" data-big>—</div><div class="sub" data-sub></div></div></div><div class="plot"></div><p class="empty">Start this machine to see its charts</p></article>
+</section>
+</main>
+</div>
+
+<dialog id="dlg-new">
+<form class="dlg" id="new-form">
+<h3>New VM</h3>
+<label class="field">Name<input class="in" id="f-name" required maxlength="40" autocomplete="off"></label>
+<div class="field">Size<div class="chips">
+<label><input type="radio" name="size" value="s"><span>Small<small>512 MB · 1 vCPU</small></span></label>
+<label><input type="radio" name="size" value="m" checked><span>Medium<small>1 GB · 1 vCPU</small></span></label>
+<label><input type="radio" name="size" value="l"><span>Large<small>2 GB · 1 vCPU</small></span></label>
+</div></div>
+<div class="btns"><button type="button" class="q" id="cancel-new">Cancel</button><button class="btn wipe" type="submit">Create VM</button></div>
+</form>
+</dialog>
+
+<dialog id="dlg-del">
+<form class="dlg" id="del-form">
+<h3>Delete machine?</h3>
+<p class="note">This removes <strong id="del-name"></strong> and its logs from this PC. This cannot be undone.</p>
+<div class="btns"><button type="button" class="q" id="cancel-del">Cancel</button><button class="btn danger" type="submit">Delete VM</button></div>
+</form>
+</dialog>
+
+<dialog id="dlg-set">
+<div class="dlg">
+<h3>Settings</h3>
+<div class="row"><span>Dark theme</span><button class="sw" id="theme" role="switch" aria-checked="false" aria-label="Dark theme"><span class="k"></span></button></div>
+<div class="row"><span>Engine</span><span class="mono" id="engine-version">local</span></div>
+<div class="btns"><button class="btn wipe" id="close-set">Done</button></div>
+</div>
+</dialog>
+<script src="app.js"></script>
+</body>
+</html>

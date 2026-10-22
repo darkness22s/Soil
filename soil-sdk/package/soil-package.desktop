@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Soil Package
+Comment=Run or install a Soil app package
+Exec=/usr/local/bin/soil run %f
+Icon=application-x-executable
+MimeType=application/x-soil-package;
+Terminal=false
+NoDisplay=true
+Categories=System;

@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://soil.local/schema/soil.schema.json",
+  "title": "Soil app manifest (soil.json)",
+  "type": "object",
+  "required": ["schema", "id", "name", "version", "kind", "icon"],
+  "additionalProperties": true,
+  "properties": {
+    "schema": { "type": "integer", "const": 1 },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{1,63}$"
+    },
+    "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["webapp", "installer", "webapp+native"]
+    },
+    "description": { "type": "string", "maxLength": 400 },
+    "author": { "type": "string", "maxLength": 120 },
+    "homepage": { "type": "string", "maxLength": 300 },
+    "entry": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._/-]+$"
+    },
+    "icon": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._/-]+\\.png$"
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "width": { "type": "integer", "minimum": 320, "maximum": 4096 },
+        "height": { "type": "integer", "minimum": 240, "maximum": 4096 },
+        "resizable": { "type": "boolean" }
+      }
+    },
+    "permissions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": ["clipboard", "dialogs", "notifications", "openExternal", "exec"]
+      }
+    },
+    "exec": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9._/-]+$" }
+    },
+    "install": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["command"],
+          "additionalProperties": false,
+          "properties": {
+            "command": { "type": "string", "pattern": "^[A-Za-z0-9._/-]+$" },
+            "args": { "type": "array", "items": { "type": "string" } },
+            "root": { "type": "boolean" }
+          }
+        }
+      ]
+    },
+    "min_ram_mb": { "type": "integer", "minimum": 32, "maximum": 65536 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "enum": ["webapp", "webapp+native"] } } },
+      "then": { "required": ["entry"] }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "installer" } } },
+      "then": { "required": ["install"] }
+    }
+  ]
+}

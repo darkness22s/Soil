@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "id": "org.soil.hello",
+  "name": "Hello Soil",
+  "version": "1.0.0",
+  "kind": "webapp",
+  "description": "Sample Soil app. Exercises the window.soil bridge, notifications, clipboard and persistent storage.",
+  "author": "Soil SDK",
+  "entry": "web/index.html",
+  "icon": "icon.png",
+  "window": {
+    "width": 760,
+    "height": 560,
+    "resizable": true
+  },
+  "permissions": [
+    "notifications",
+    "clipboard"
+  ],
+  "exec": [],
+  "install": null,
+  "min_ram_mb": 96
+}

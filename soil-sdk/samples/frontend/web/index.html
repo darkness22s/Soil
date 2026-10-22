@@ -1,0 +1,101 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>VMs, light</title>
+<script src="./vendor/react.js"></script>
+<script src="./vendor/react-dom.js"></script>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+
+<style>
+body{margin:0;background:#FFFFFF}
+.app{--bg:#FFFFFF;--ink:#15181D;--ink2:#5C6370;--line:#E3E6EB;--ok:#15181D;--off:#8A929E;--ease:cubic-bezier(.22,1,.36,1);--spring:cubic-bezier(.34,1.45,.64,1);box-sizing:border-box;height:760px;display:flex;justify-content:center;padding:0 24px;background:var(--bg);color:var(--ink);font:400 15px/1.5 "Instrument Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;font-variant-numeric:tabular-nums}
+.col{width:100%;max-width:720px;padding-top:48px}.brand{display:flex;align-items:center;gap:10px;margin-bottom:36px}.brand svg{display:block;width:28px;height:28px;flex:none}.brand span{font-size:19px;font-weight:650;letter-spacing:-.02em}
+header{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:28px}
+h1{margin:0;font-size:34px;line-height:1;font-weight:650;letter-spacing:-.02em}
+.sum{margin:10px 0 0;font-size:14px;color:var(--ink2)}
+button{font:inherit;cursor:pointer}
+.btn{position:relative;display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 18px 0 14px;border:0;border-radius:99px;background:var(--ink);color:var(--bg);font-size:14.5px;font-weight:600;transition:transform .5s var(--spring)}.btn::before{content:'';position:absolute;inset:0;border-radius:inherit;background:#4B2E83;clip-path:inset(0 100% 0 0);transition:clip-path .65s var(--ease)}.btn:hover::before{clip-path:inset(0 0 0 0)}.btn>*{position:relative}.btn:active{transform:scale(.96);transition-duration:.12s;transition-timing-function:var(--ease)}.btn:focus-visible{outline:2px solid var(--ink);outline-offset:3px}.plus{flex:none;width:14px;height:14px}
+.q{height:36px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:none;color:var(--ink);font-size:14px;font-weight:600}
+.list{border-top:1px solid var(--line)}
+.row{box-shadow:inset 0 -1px 0 var(--line)}
+.tog{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip-path:inset(50%)}
+.head{display:flex;align-items:center;gap:14px;padding:14px 8px}
+.name{flex:1;min-width:0;display:flex;align-items:center;gap:14px;min-height:44px}
+.dot{flex:none;width:10px;height:10px;border-radius:50%;background:var(--ok)}
+.pw:not(:checked)~.name .dot{background:none;box-shadow:inset 0 0 0 1.5px var(--ink2)}
+.tx{display:flex;flex-direction:column;min-width:0}
+.t{font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.m{font-size:13.5px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.m b{display:none;font-weight:400}
+.pw:checked~.name .on,.pw:not(:checked)~.name .off{display:inline}
+.sw{position:relative;flex:none;width:48px;height:28px;border-radius:99px;background:var(--off);cursor:pointer}
+.sw::before{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--ok);clip-path:inset(0 100% 0 0 round 99px);transition:clip-path .5s var(--ease)}
+.pw:checked~.sw::before{clip-path:inset(0 0 0 0 round 99px)}
+.k{position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .5s var(--spring)}
+.pw:checked~.sw .k{transform:translateX(20px)}
+.pw:focus-visible~.sw,.rx:focus-visible~.head .name{outline:2px solid var(--ink);outline-offset:4px}
+.more{display:grid;grid-template-rows:0fr;transition:grid-template-rows .5s var(--ease)}
+.rx:checked~.more{grid-template-rows:1fr}
+.clip{min-height:0;overflow:hidden}
+.pad{padding:0 8px 18px 32px;transform:translateY(-10px);transition:transform .5s var(--ease)}
+.rx:checked~.more .pad{transform:none}
+.facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;max-width:420px;margin:0 0 16px}
+dt{font-size:13px;color:var(--ink2)}
+dd{margin:2px 0 0;font-size:15px;font-weight:500}
+.acts{display:flex;gap:8px}
+</style>
+</helmet>
+<div class="app"><div class="col">
+<div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="2" width="28" height="28" rx="8" fill="currentColor"></rect><path d="M19.75 10.5A7.5 7.5 0 1 1 12.25 10.5" fill="none" style="stroke:var(--bg)" stroke-width="2.8" stroke-linecap="round"></path><path d="M16 8.5v7" style="stroke:var(--bg)" stroke-width="2.8" stroke-linecap="round"></path></svg><span>Soil</span></div><header><div><h1>VMs</h1><p class="sum">2 running, 2 stopped</p></div><button class="btn"><svg class="plus" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1.5v11M1.5 7h11" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg><span>New VM</span></button></header>
+<div class="list">
+<div class="row">
+<input class="tog rx" type="checkbox" id="rx1" checked="">
+<div class="head">
+<input class="tog pw" type="checkbox" id="pw1" role="switch" aria-label="Power for api-gateway" checked="">
+<label class="name" for="rx1"><span class="dot"></span><span class="tx"><span class="t">api-gateway</span><span class="m"><b class="on">Running</b><b class="off">Stopped</b>, Ubuntu 24.04, 4 CPU, 8 GB</span></span></label>
+<label class="sw" for="pw1"><span class="k"></span></label>
+</div>
+<div class="more"><div class="clip"><div class="pad">
+<dl class="facts"><div><dt>Address</dt><dd>10.0.4.12</dd></div><div><dt>Disk</dt><dd>80 GB</dd></div><div><dt>Uptime</dt><dd>3 days</dd></div></dl>
+<div class="acts"><button class="q">Restart</button><button class="q">Delete</button></div>
+</div></div></div>
+</div>
+<div class="row">
+<div class="head">
+<input class="tog pw" type="checkbox" id="pw2" role="switch" aria-label="Power for postgres-primary" checked="">
+<div class="name"><span class="dot"></span><span class="tx"><span class="t">postgres-primary</span><span class="m"><b class="on">Running</b><b class="off">Stopped</b>, Debian 12, 8 CPU, 32 GB</span></span></div>
+<label class="sw" for="pw2"><span class="k"></span></label>
+</div>
+</div>
+<div class="row">
+<div class="head">
+<input class="tog pw" type="checkbox" id="pw3" role="switch" aria-label="Power for build-runner">
+<div class="name"><span class="dot"></span><span class="tx"><span class="t">build-runner</span><span class="m"><b class="on">Running</b><b class="off">Stopped</b>, Fedora 41, 4 CPU, 16 GB</span></span></div>
+<label class="sw" for="pw3"><span class="k"></span></label>
+</div>
+</div>
+<div class="row">
+<div class="head">
+<input class="tog pw" type="checkbox" id="pw4" role="switch" aria-label="Power for win-sandbox">
+<div class="name"><span class="dot"></span><span class="tx"><span class="t">win-sandbox</span><span class="m"><b class="on">Running</b><b class="off">Stopped</b>, Windows Server 2022, 2 CPU, 4 GB</span></span></div>
+<label class="sw" for="pw4"><span class="k"></span></label>
+</div>
+</div>
+</div>
+</div></div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":760}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>
+

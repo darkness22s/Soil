@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hello Soil</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    font-family: "DejaVu Sans", system-ui, sans-serif;
+    background: radial-gradient(1200px 700px at 15% -10%, #3b2f22 0%, #1d1a16 45%, #121110 100%);
+    color: #f1ebe2; display: flex; align-items: center; justify-content: center;
+  }
+  .card {
+    width: min(640px, calc(100vw - 48px));
+    background: rgba(28, 25, 21, 0.88);
+    border: 1px solid rgba(214, 178, 122, 0.25);
+    border-radius: 18px; padding: 34px 36px 30px;
+    box-shadow: 0 30px 70px rgba(0, 0, 0, 0.45);
+  }
+  .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+  .dot {
+    width: 40px; height: 40px; border-radius: 13px;
+    background: linear-gradient(145deg, #d6b27a, #8a6b42 60%, #5b4529);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 6px 18px rgba(0,0,0,.4);
+  }
+  h1 { font-size: 30px; margin: 0; letter-spacing: .3px; font-weight: 700; }
+  .sub { color: #b9ac97; margin: 4px 0 22px; font-size: 14px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+  button {
+    font: inherit; font-size: 14px; color: #17130e; cursor: pointer;
+    background: linear-gradient(180deg, #e8cf9f, #cfa96c);
+    border: 0; border-radius: 10px; padding: 10px 14px; font-weight: 600;
+    box-shadow: 0 4px 12px rgba(0,0,0,.35);
+  }
+  button.ghost {
+    background: transparent; color: #e3d6bf; font-weight: 500;
+    border: 1px solid rgba(214, 178, 122, 0.35); box-shadow: none;
+  }
+  button:active { transform: translateY(1px); }
+  input {
+    width: 100%; font: inherit; padding: 11px 13px; border-radius: 10px;
+    border: 1px solid rgba(214, 178, 122, 0.3); background: rgba(0,0,0,.25);
+    color: #f6efe3; outline: none;
+  }
+  input:focus { border-color: #d6b27a; }
+  .status {
+    margin-top: 20px; font-size: 13px; line-height: 1.5;
+    color: #cdbfa8; background: rgba(0,0,0,.28);
+    border: 1px solid rgba(214,178,122,.15);
+    border-radius: 10px; padding: 12px 14px; min-height: 46px;
+  }
+  .status b { color: #f0d49c; font-weight: 600; }
+  code { font-family: "DejaVu Sans Mono", monospace; font-size: 12px; color: #e8cf9f; }
+  .foot { margin-top: 16px; font-size: 11.5px; color: #8d8272; }
+</style>
+</head>
+<body>
+  <main class="card">
+    <div class="brand">
+      <div class="dot" aria-hidden="true"></div>
+      <div>
+        <h1>Hello Soil</h1>
+        <div class="sub" id="sub">a tiny app packaged as a .sol file</div>
+      </div>
+    </div>
+
+    <input id="msg" value="Hello from a signed Soil package" aria-label="Message">
+    <div class="row">
+      <button id="notify">Notify</button>
+      <button id="copy">Copy message</button>
+      <button id="save">Save to store</button>
+      <button class="ghost" id="readclip">Read clipboard</button>
+      <button class="ghost" id="load">Load stored value</button>
+    </div>
+
+    <div class="status" id="status">Starting bridge…</div>
+    <div class="foot">window.soil • ed25519-signed package • WebKitGTK runtime</div>
+  </main>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var status = function (html) { $("status").innerHTML = html; };
+  var bridge = window.soil;
+  if (!bridge) {
+    status("Running outside Soil: bridge unavailable. This page still renders fine.");
+    return;
+  }
+  bridge.app.info().then(function (info) {
+    document.title = "Hello Soil — " + info.version;
+    $("sub").textContent = info.name + " " + info.version + " (" + info.kind + ")";
+    status("Bridge ready. App id <b>" + info.id + "</b><br>Data dir <code>" + info.dataDir + "</code>");
+    return bridge.store.set("lastLaunch", new Date().toISOString());
+  }).then(function () {
+    return bridge.store.get("launches");
+  }).then(function (r) {
+    var n = parseInt(r.value || "0", 10) + 1;
+    return bridge.store.set("launches", String(n)).then(function () { return n; });
+  }).then(function (n) {
+    document.title = "Hello Soil — launch #" + n;
+  }).catch(function (e) {
+    status("Bridge error: " + e.message);
+  });
+
+  $("notify").onclick = function () {
+    bridge.notify("Hello Soil", $("msg").value).catch(function (e) {
+      status("Notify failed: " + e.message);
+    });
+  };
+  $("copy").onclick = function () {
+    bridge.clipboard.write($("msg").value).then(function () {
+      status("Copied to clipboard.");
+    }).catch(function (e) { status("Copy failed: " + e.message); });
+  };
+  $("readclip").onclick = function () {
+    bridge.clipboard.read().then(function (r) {
+      status("Clipboard: <b>" + (r.text || "(empty)") + "</b>");
+    }).catch(function (e) { status("Clipboard read failed: " + e.message); });
+  };
+  $("save").onclick = function () {
+    var v = $("msg").value;
+    bridge.store.set("message", v).then(function () {
+      status("Stored under key <code>message</code>: <b>" + v + "</b>");
+    }).catch(function (e) { status("Store failed: " + e.message); });
+  };
+  $("load").onclick = function () {
+    bridge.store.get("message").then(function (r) {
+      status(r.value === null ? "No stored message yet."
+        : "Stored value: <b>" + r.value + "</b>");
+    }).catch(function (e) { status("Store failed: " + e.message); });
+  };
+})();
+</script>
+</body>
+</html>

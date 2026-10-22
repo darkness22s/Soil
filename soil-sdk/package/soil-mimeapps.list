@@ -1,0 +1,5 @@
+[Default Applications]
+application/x-soil-package=soil-package.desktop
+
+[Added Associations]
+application/x-soil-package=soil-package.desktop;

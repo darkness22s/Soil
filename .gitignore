@@ -1,0 +1,51 @@
+# Build outputs
+**/bin/
+**/obj/
+**/dist/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pdb
+*.wixpdb
+*.msi
+*.exe
+*.dll
+*.log
+*.tmp
+*.cache
+
+# VM images, archives, and generated packages
+*.iso
+*.squashfs
+*.gz
+*.tar
+*.tar.gz
+*.zip
+*.7z
+T3Code.sol
+t3vm-frame.jpg
+
+# Private keys and local state
+*.key.json
+soil-keys/
+.agents/
+.claude/
+.vscode/
+.vs/
+.idea/
+.vite/
+
+# Large third-party checkouts and local build/cache trees
+.t3build/
+t3code/
+t3code-soil/
+Virtualization system/
+milestones/
+iso/
+
+# Windows/macOS/Linux local files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+engine/build_out.txt
