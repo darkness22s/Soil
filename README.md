@@ -60,7 +60,7 @@ and files are never removed by an upgrade or uninstall.
 ```
 
 This publishes the self-contained app to `app\dist\Soil`, copies the VM engine
-and guest images, and builds `app\dist\Soil-0.2.0-x64.msi`. The installer is
+and guest images, and builds `app\dist\Soil-4.2.0-x64.msi`. The installer is
 per-user and runs `Soil.exe --bootstrap` to create the Soil home.
 
 To use different guest images, pass `-ImagesDir <path>` with a folder containing

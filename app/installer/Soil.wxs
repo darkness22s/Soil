@@ -2,7 +2,7 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Soil"
            Manufacturer="Soil"
-           Version="0.2.0.0"
+           Version="4.2.0.0"
            UpgradeCode="4B2E8DFA-B0DB-4AB3-9DA4-BA03BB415905"
            Scope="perUser"
            Compressed="yes"

@@ -88,6 +88,40 @@ typedef struct VBLK_STATE
 
 static VBLK_STATE s_blk;
 
+/* snapshot glue ---------------------------------------------------- */
+int VhVirtioBlkSaveState(const u8 **ppb)
+{
+    *ppb = (const u8 *)&s_blk;
+    return (int)sizeof(s_blk);
+}
+
+void VhVirtioBlkLoadState(const u8 *pb)
+{
+    VBLK_STATE src;
+    memcpy(&src, pb, sizeof(src));
+    s_blk.bStatus = src.bStatus;
+    s_blk.uQSel = src.uQSel;
+    s_blk.uPfn = src.uPfn;
+    s_blk.uGuestFeatures = src.uGuestFeatures;
+    s_blk.bIsr = src.bIsr;
+    s_blk.uLastAvail = src.uLastAvail;
+    /* diagnostics only */
+    s_blk.cLog = src.cLog;
+    s_blk.cKicks = src.cKicks;
+    s_blk.cDone = src.cDone;
+    s_blk.cRaised = src.cRaised;
+    s_blk.cIsrReads = src.cIsrReads;
+    s_blk.cReqs = src.cReqs;
+    /* fPresent/cbDisk/cSectors are re-established by VhVirtioBlkInit() on the
+       single live socket; callers that changed them are a misuse. */
+    if (src.cbDisk != s_blk.cbDisk || src.cSectors != s_blk.cSectors)
+    {
+        VhLog("vblk: disk geometry changed since snapshot (%llu/%llu vs %llu/%llu) - hot DVDetach",
+              (unsigned long long)src.cbDisk, (unsigned long long)src.cSectors,
+              (unsigned long long)s_blk.cbDisk, (unsigned long long)s_blk.cSectors);
+    }
+}
+
 void VhVirtioBlkInit(const char *pszPath)
 {
     if (!pszPath)

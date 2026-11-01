@@ -19,7 +19,7 @@ internal static class Program
 
         try
         {
-            using var form = new MainForm(server.Url, paths);
+            using var form = new MainForm(server.Url, paths, manager);
             Application.Run(form);
         }
         finally

@@ -20,7 +20,14 @@ public sealed class VmManager
     private const int FrameStride = FrameWidth * 4;
     private const int FrameBytes = FrameStride * FrameHeight;
     private const int SharedFrameOffset = 24;
-    private const int SharedSize = SharedFrameOffset + FrameBytes;
+    // command tail after the frame region (engine VH_IPC_SHARED layout):
+    // uCmd, cCmdHave, then a NUL-terminated 1 KiB path buffer. The view
+    // must span the whole struct so the tail stays addressable.
+    private const int CmdOffset = SharedFrameOffset + FrameBytes;
+    private const int CmdHaveOffset = CmdOffset + 4;
+    private const int CmdPathOffset = CmdOffset + 8;
+    private const int CmdPathBytes = 1024;
+    private const int SharedSize = CmdPathOffset + CmdPathBytes;
     private const int StopOffset = 4;
 
     private readonly string m_baseDir;
@@ -155,6 +162,7 @@ public sealed class VmManager
                 return null;
             runtime.StartCts?.Cancel();
             runtime.StatsCts?.Cancel();
+            runtime.ParkPending = false;
             var proc = runtime.Proc;
             if (proc is null)
             {
@@ -212,7 +220,7 @@ public sealed class VmManager
 
                 try
                 {
-                    proc!.WaitForExit(3000);
+                    proc!.WaitForExit(8000);
                 }
                 catch
                 {
@@ -238,7 +246,7 @@ public sealed class VmManager
                 KillQuietly(proc);
                 try
                 {
-                    proc!.WaitForExit(3000);
+                    proc!.WaitForExit(8000);
                 }
                 catch
                 {
@@ -328,7 +336,7 @@ public sealed class VmManager
         {
             try
             {
-                if (!runtime.Proc!.WaitForExit(3000))
+                if (!runtime.Proc!.WaitForExit(8000))
                     runtime.Proc.Kill(true);
             }
             catch
@@ -519,6 +527,30 @@ public sealed class VmManager
             psi.ArgumentList.Add("--ipc");
             psi.ArgumentList.Add(token);
 
+            // fastboot: save guest state to boot.snap on every clean stop, and
+            // resume from it when it exists. A stale or unreadable snapshot
+            // makes the engine fall back to a regular boot on its own.
+            var snapPath = Path.Combine(m_paths.MachineDir(runtime.Record.Id), "boot.snap");
+            var restoreBoot = false;
+            if (File.Exists(snapPath))
+            {
+                try
+                {
+                    restoreBoot = new FileInfo(snapPath).Length > 0;
+                }
+                catch (IOException)
+                {
+                    restoreBoot = false;
+                }
+            }
+            psi.ArgumentList.Add("--snapshot-out");
+            psi.ArgumentList.Add(snapPath);
+            if (restoreBoot)
+            {
+                psi.ArgumentList.Add("--restore");
+                psi.ArgumentList.Add(snapPath);
+            }
+
             proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
             proc.OutputDataReceived += (_, _) => { };
             proc.ErrorDataReceived += (_, _) => { };
@@ -643,6 +675,8 @@ public sealed class VmManager
 
             StartGuestStats(runtime);
             _ = Task.Run(() => MonitorExitAsync(runtime, proc));
+            if (!restoreBoot)
+                _ = Task.Run(() => KickFirstBootSnapshotAsync(runtime, snapPath, proc));
         }
         catch (OperationCanceledException)
         {
@@ -698,6 +732,11 @@ public sealed class VmManager
 
     private async Task MonitorExitAsync(VmRuntime runtime, Process proc)
     {
+        int generation;
+        lock (m_lock)
+        {
+            generation = runtime.StartGeneration;
+        }
         try
         {
             await proc.WaitForExitAsync();
@@ -708,9 +747,10 @@ public sealed class VmManager
 
         lock (m_lock)
         {
-            if (ReferenceEquals(runtime.Proc, proc))
+            if (ReferenceEquals(runtime.Proc, proc) &&
+                runtime.StartGeneration == generation)
             {
-                runtime.Status = "stopped";
+                runtime.Status = ConsumeParkLocked(runtime);
                 runtime.StartedUtc = null;
                 runtime.History.Clear();
                 CleanupLocked(runtime);
@@ -718,12 +758,22 @@ public sealed class VmManager
         }
     }
 
+    private static string ConsumeParkLocked(VmRuntime runtime)
+    {
+        if (!runtime.ParkPending)
+            return "stopped";
+        runtime.ParkPending = false;
+        return "idle";
+    }
+
     private async Task StopAsync(VmRuntime runtime, Process proc)
     {
+        int generation = runtime.StartGeneration;
         try
         {
             lock (m_lock)
             {
+                generation = runtime.StartGeneration;
                 if (ReferenceEquals(runtime.Proc, proc))
                     runtime.View?.Write(StopOffset, 1);
             }
@@ -734,7 +784,7 @@ public sealed class VmManager
 
         try
         {
-            if (!await WaitForExitAsync(proc, TimeSpan.FromSeconds(5)))
+            if (!await WaitForExitAsync(proc, TimeSpan.FromSeconds(15)))
                 proc.Kill(true);
         }
         catch
@@ -743,9 +793,11 @@ public sealed class VmManager
 
         lock (m_lock)
         {
-            if (ReferenceEquals(runtime.Proc, proc))
+            // a newer start overrides this stop's terminal bookkeeping
+            if (ReferenceEquals(runtime.Proc, proc) &&
+                runtime.StartGeneration == generation)
             {
-                runtime.Status = "stopped";
+                runtime.Status = ConsumeParkLocked(runtime);
                 runtime.StartedUtc = null;
                 runtime.History.Clear();
                 CleanupLocked(runtime);
@@ -816,12 +868,49 @@ public sealed class VmManager
         {
             if (runtime.Proc is { HasExited: true } && runtime.Status != "stopped")
             {
-                runtime.Status = "stopped";
+                runtime.Status = ConsumeParkLocked(runtime);
                 runtime.StartedUtc = null;
                 runtime.History.Clear();
                 CleanupLocked(runtime);
             }
         }
+    }
+
+    // Idle mode (parked): the guest was snapshotted and the engine process
+    // exited, so the "on" machine consumes no CPU, allocation, or RAM at all.
+    // Any later start resumes the saved state in a few hundred ms.
+    public void IdleAll()
+    {
+        lock (m_lock)
+        {
+            foreach (var runtime in m_runtimes.Values)
+            {
+                if (runtime.Deleting || runtime.ParkPending)
+                    continue;
+                var proc = runtime.Proc;
+                if (proc is null || proc.HasExited || runtime.Status != "running")
+                    continue;
+                runtime.StartCts?.Cancel();
+                runtime.StatsCts?.Cancel();
+                runtime.ParkPending = true;
+                runtime.Status = "stopping";
+                _ = Task.Run(() => StopAsync(runtime, proc));
+            }
+        }
+    }
+
+    public void ResumeAll()
+    {
+        List<VmRecord> targets;
+        lock (m_lock)
+        {
+            targets = m_runtimes.Values
+                .Where(rt => !rt.Deleting && rt.Status == "idle")
+                .Select(rt => rt.Record)
+                .ToList();
+        }
+        foreach (var record in targets)
+            _ = Start(record.Id);
     }
 
     private void Cleanup(VmRuntime runtime)
@@ -1160,7 +1249,50 @@ public sealed class VmManager
             psi.ArgumentList.Add("/grant:r");
             psi.ArgumentList.Add(user + ":F");
             using var proc = Process.Start(psi);
-            proc?.WaitForExit(3000);
+            proc?.WaitForExit(8000);
+        }
+        catch
+        {
+        }
+    }
+
+    // First boot of a machine has no boot.snap yet: ask the engine through
+    // the IPC command tail to park the guest and save one soon after the
+    // desktop is up, so the very next start resumes instantly. Later boots
+    // refresh the file on clean stop, so this only fires when it must.
+    private async Task KickFirstBootSnapshotAsync(VmRuntime runtime, string snapPath, Process proc)
+    {
+        try
+        {
+            for (var i = 0; i < 25 && !proc.HasExited; i++)
+                await Task.Delay(200);
+            if (proc.HasExited || File.Exists(snapPath) || runtime.View is null)
+                return;
+
+            var view = runtime.View;
+            var path = System.Text.Encoding.ASCII.GetBytes(snapPath);
+            if (path.Length == 0 || path.Length >= CmdPathBytes)
+                return;
+
+            // engine protocol: path + NUL in szCmd, byte count without NUL in
+            // cCmdHave, then uCmd=1 to go. The engine zeroes uCmd when it
+            // consumes the request and writes uCmd=2 once the save settled.
+            var buf = new byte[path.Length + 1];
+            path.CopyTo(buf, 0);
+            view.WriteArray(CmdPathOffset, buf, 0, buf.Length);
+            view.Write(CmdHaveOffset, path.Length);
+            view.Write(CmdOffset, 1);
+
+            for (var i = 0; i < 60; i++)
+            {
+                await Task.Delay(250);
+                var ack = view.ReadInt32(CmdOffset);
+                if (ack == 2)
+                {
+                    view.Write(CmdOffset, 0);
+                    return;
+                }
+            }
         }
         catch
         {
@@ -1521,6 +1653,9 @@ internal sealed class VmRuntime
     internal CancellationTokenSource? StartCts;
     internal Task? LaunchTask;
     internal int StartGeneration;
+    // set when parking (idle mode): on the engine's clean exit the runtime
+    // settles into "idle" instead of "stopped"; consumed exactly once
+    internal bool ParkPending;
     internal string Status = "stopped";
     internal bool Deleting;
     internal string? Error;

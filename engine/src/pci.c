@@ -35,6 +35,35 @@ void VhPciInit(void)
     s_uBlkBase = (u16)(VH_PCI_BLK_BAR_IO & 0xFF00);
 }
 
+/* snapshot glue ---------------------------------------------------- */
+u32 VhPciSaveState(const u32 **ppbData)
+{
+    static u32 abOut[8];
+    abOut[0] = s_uCfgAddr;
+    abOut[1] = s_uNicCommand;
+    abOut[2] = s_uNicBar;
+    abOut[3] = s_uNicBase;
+    abOut[4] = s_uBlkCommand;
+    abOut[5] = s_uBlkBar;
+    abOut[6] = s_uBlkBase;
+    abOut[7] = 0;
+    *ppbData = abOut;
+    return 8;
+}
+
+void VhPciLoadState(const u32 *pbData, u32 cWords)
+{
+    if (!pbData || cWords < 7)
+        return;
+    s_uCfgAddr = pbData[0];
+    s_uNicCommand = (u16)pbData[1];
+    s_uNicBar = pbData[2];
+    s_uNicBase = (u16)pbData[3];
+    s_uBlkCommand = (u16)pbData[4];
+    s_uBlkBar = pbData[5];
+    s_uBlkBase = (u16)pbData[6];
+}
+
 u16 VhPciNicIoBase(void)
 {
     return s_uNicBase;

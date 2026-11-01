@@ -53,7 +53,7 @@ if ((Resolve-Path -LiteralPath $imagesSource).Path -ne (Resolve-Path -LiteralPat
 }
 
 $readme = @"
-Soil 0.2.0 - private local build
+Soil 4.2.0 - private local build
 
 Private build. Not for public release or upload.
 
@@ -65,6 +65,7 @@ Requirements
 Use
 - Launch Soil from the Start Menu.
 - Create machines with +, start them with the power switch, and click the screen to capture input.
+- Machines resume from a saved snapshot instead of booting again; minimizing the window parks running machines and restoring it brings them back.
 - Browse machines, apps, skills, cache, and logs from Files.
 - Machine data lives in %USERPROFILE%\.soil.
 

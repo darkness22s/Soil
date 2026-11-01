@@ -21,6 +21,7 @@ $sources = @(
     (Join-Path $src "ne2000.c"),
     (Join-Path $src "virtio_blk.c"),
     (Join-Path $src "netglue.c"),
+    (Join-Path $src "snapshot.c"),
     (Join-Path $slirp "bootp.c"),
     (Join-Path $slirp "cksum.c"),
     (Join-Path $slirp "if.c"),

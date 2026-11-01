@@ -30,7 +30,7 @@
   const previewImage = $('#preview-image');
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  const LABEL = { running: 'Running', stopped: 'Stopped', starting: 'Starting', stopping: 'Stopping' };
+  const LABEL = { running: 'Running', stopped: 'Stopped', starting: 'Starting', stopping: 'Stopping', idle: 'Idle' };
   const state = {
     vms: [],
     selected: null,
@@ -205,6 +205,7 @@
     let meta = `${LABEL[vm.status] || vm.status}, ${vm.cpu} CPU, ${gb(vm.ramMb)}`;
     if (vm.status === 'running' && vm.uptimeSec > 30) meta += ' · ' + ago(vm.uptimeSec);
     if (vm.status === 'stopped' && vm.error) meta = 'Stopped — ' + vm.error;
+    if (vm.status === 'idle') meta += ' · parked on disk';
     el.querySelector('.mt').textContent = meta;
     const sw = el.querySelector('.sw');
     const on = vm.status === 'running' || vm.status === 'starting';
@@ -304,9 +305,11 @@
       setUnavailable(
         vm.status === 'stopping'
           ? 'Stopping…'
-          : vm.error
-            ? vm.error
-            : 'Start this machine to see its screen'
+          : vm.status === 'idle'
+            ? 'Idle — the machine is parked on disk and uses no CPU or memory'
+            : vm.error
+              ? vm.error
+              : 'Start this machine to see its screen'
       );
     }
   }

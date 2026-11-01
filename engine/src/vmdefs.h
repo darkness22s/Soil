@@ -119,6 +119,10 @@ typedef struct VH_PIT
     u64 lastTickNs;
     u64 nsAccum;
     u8  speakerPort;        /* port 0x61 */
+    /* catch-up bookkeeping for channel 0 (was static in devices.c; part of
+       the snapshot so a resumed VM catches up ticks from the exact place) */
+    u64 cPeriods;           /* number of periods already raised */
+    u64 startNsSeen;        /* startNs tracked by the tick counter */
 } VH_PIT;
 
 /* ------------------------------------------------------------------ */
@@ -225,6 +229,22 @@ typedef struct VH_VM
     /* atomic framebuffer capture handshake (viewer/timer <-> run loop) */
     volatile bool fFbCopyWanted;   /* capture pending: run loop must park */
     volatile bool fFbCopyPaused;   /* run loop parked outside WHvRunVirtualProcessor */
+
+    /* live snapshot request: ipc.c fills szSnapPath + sets fSnapWanted; the
+       run loop parks the vCPU, fSaving holds the helper threads off, and the
+       run loop writes the snapshot between runs */
+    char szSnapPath[1024];
+    volatile bool fSnapWanted;    /* snapshot request pending (run loop) */
+    volatile bool fSnapWorking;   /* snapshot in progress (helpers must idle) */
+    bool fCleanExit;              /* stop came from the host (uStop/IPC), so a
+                                     --snapshot-out refresh may be written */
+    /* v2 lazy restore: guest RAM is mapped from the snapshot file in 64 KiB
+       chunks on first access instead of being copied up front. Restore is
+       then effectively free; the file must stay open while the VM runs. */
+    bool fSnapRamLazy;
+    FILE *pFileLazy;              /* snapshot file backing the unloaded chunks */
+    u8 *pbRamLoaded;              /* one bit per 64 KiB chunk */
+    u64 cLazyChunks;              /* chunks paged in from the file so far */
 } VH_VM;
 
 /* ------------------------------------------------------------------ */
@@ -260,6 +280,7 @@ int  VhWhvCancelRun(VH_VM *pVm);
 /* devices.c                                                           */
 /* ------------------------------------------------------------------ */
 void VhDevInit(VH_VM *pVm);
+void VhDevResetState(VH_VM *pVm);   /* device defaults, safe to re-run (no lock setup) */
 /* Returns true if the port was handled. */
 bool VhDevIoPort(VH_VM *pVm, u16 uPort, bool fWrite, u32 cbWidth, u32 *puValue);
 void VhDevRaiseIrq(VH_VM *pVm, u8 bIrq);
@@ -277,6 +298,7 @@ void VhDevUartWriteGuest(VH_VM *pVm, const void *pv, u32 cb);   /* host -> guest
 void VhDevUartGuestOutByte(VH_VM *pVm, u8 b);                   /* guest TX -> host */
 void VhDevKbdQueueScancodes(VH_VM *pVm, const u8 *pb, u32 cb);
 void VhDevMouseQueuePacket(VH_VM *pVm, const u8 *pb, u32 cb);
+void VhDevPostRestoreFixup(VH_VM *pVm);   /* re-anchor host fn pointers after snapshot load */
 
 /* ------------------------------------------------------------------ */
 /* viewer.c - interactive host window (live framebuffer + real input)  */
@@ -295,9 +317,18 @@ typedef struct VH_IPC_SHARED
     u32 uStride;
     u32 uReserved;
     u8  abFrame[VH_FB_SIZE];
+    /* command area lives AFTER the frame so the app's fixed-size view can
+       keep addressing the frame at the same offset forever */
+    volatile LONG uCmd;         /* 0 none, 1 = save snapshot to cchPath, 2 = ack */
+    volatile LONG cCmdHave;     /* path bytes available (without NUL) */
+    char szCmd[1024];
 } VH_IPC_SHARED;
 
 void VhIpcStart(VH_VM *pVm, const char *pszToken);
+
+/* v2 lazy restore helpers (snapshot.c) */
+#define VH_LAZY_CHUNK 0x10000ULL      /* 64 KiB guest-RAM page-in granularity */
+int  VhSnapLazyLoad(VH_VM *pVm, u64 uGpa);   /* load+map the chunk holding GPA */
 
 /* ------------------------------------------------------------------ */
 /* vmhost.c                                                            */
@@ -320,6 +351,9 @@ void VhPciInit(void);
 bool VhPciIo(VH_VM *pVm, u16 uPort, bool fWrite, u32 cbWidth, u32 *puValue);
 u16  VhPciNicIoBase(void);
 u16  VhPciBlkIoBase(void);
+/* snapshot accessors for the PCI config statics */
+u32  VhPciSaveState(const u32 **ppbData);   /* returns count of u32 words */
+void VhPciLoadState(const u32 *pbData, u32 cWords);
 
 /* ------------------------------------------------------------------ */
 /* virtio_blk.c                                                        */
@@ -327,6 +361,8 @@ u16  VhPciBlkIoBase(void);
 void VhVirtioBlkInit(const char *pszPath);
 bool VhVirtioBlkPresent(void);
 bool VhVirtioBlkIo(VH_VM *pVm, u32 uOffset, bool fWrite, u32 cbWidth, u32 *puValue);
+int  VhVirtioBlkSaveState(const u8 **ppb);  /* returns byte size */
+void VhVirtioBlkLoadState(const u8 *pb);
 
 /* ------------------------------------------------------------------ */
 /* ne2000.c                                                            */
@@ -334,7 +370,32 @@ bool VhVirtioBlkIo(VH_VM *pVm, u32 uOffset, bool fWrite, u32 cbWidth, u32 *puVal
 void Ne2000Init(VH_VM *pVm);
 bool Ne2000IoAccess(VH_VM *pVm, u32 uOffset, bool fWrite, u32 cbWidth, u32 *puValue);
 void Ne2000Receive(const u8 *pb, u32 cb);
+void Ne2000BindVm(VH_VM *pVm);             /* re-bind after snapshot load */
+int  Ne2000SaveState(const u8 **ppb);      /* returns byte size */
+void Ne2000LoadState(const u8 *pb);
 int  Ne2000CanReceive(void);
+
+/* ------------------------------------------------------------------ */
+/* snapshot.c - instant-boot snapshots (RAM + devices + vCPU context)   */
+/* ------------------------------------------------------------------ */
+typedef struct VhSnapImgRefs
+{
+    const char *pszKernel;      /* host file paths, stat-ed for validation */
+    const char *pszInitrd;
+    const char *pszDisk;
+} VhSnapImgRefs;
+
+/* Write the whole VM state to pszPath. The caller must have parked the
+ * vCPU and set pVm->fSnapWorking, then clear it afterwards. */
+int  VhSnapSave(VH_VM *pVm, const char *pszPath, const VhSnapImgRefs *pRefs);
+/* Bring a freshly initialized VM (RAM mapped, devices init'd, vblk/net
+ * attached) to the saved state. Returns 0 on success, 1 on failure (caller
+ * then boots fresh). */
+int  VhSnapRestore(VH_VM *pVm, const char *pszPath, const VhSnapImgRefs *pRefs);
+/* vmhost.c-owned extras (dynamic MMIO pages), called from snapshot.c;
+ * these use the raw FILE* because they consume/produce stream payloads. */
+int  VhHostSnapSaveExtra(VH_VM *pVm, FILE *pFile);
+int  VhHostSnapRestoreExtra(VH_VM *pVm, FILE *pFile, u32 cbPayload);
 
 /* ------------------------------------------------------------------ */
 /* netglue.c                                                           */

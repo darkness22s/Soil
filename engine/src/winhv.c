@@ -103,12 +103,16 @@ void VhWhvTerm(VH_VM *pVm)
 
 int VhWhvMapRam(VH_VM *pVm)
 {
-    HRESULT hrc = WHvMapGpaRange(pVm->hPartition, pVm->mem.pbRam, 0, pVm->mem.cbRam,
-                                 WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite | WHvMapGpaRangeFlagExecute);
-    if (FAILED(hrc))
+    HRESULT hrc;
+    if (!pVm->fSnapRamLazy)
     {
-        VhLog("whv: map RAM (%llu MiB) failed: %#lx", (unsigned long long)(pVm->mem.cbRam / (1024 * 1024)), (unsigned long)hrc);
-        return 1;
+        hrc = WHvMapGpaRange(pVm->hPartition, pVm->mem.pbRam, 0, pVm->mem.cbRam,
+                             WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite | WHvMapGpaRangeFlagExecute);
+        if (FAILED(hrc))
+        {
+            VhLog("whv: map RAM (%llu MiB) failed: %#lx", (unsigned long long)(pVm->mem.cbRam / (1024 * 1024)), (unsigned long)hrc);
+            return 1;
+        }
     }
 
     /* Legacy VGA/BIOS hole 0xA0000..0x100000 backed by scratch. */
@@ -126,7 +130,7 @@ int VhWhvMapRam(VH_VM *pVm)
 int VhWhvMapMmioPage(VH_VM *pVm, u64 uGpa, void *pvPage, u64 cb)
 {
     HRESULT hrc = WHvMapGpaRange(pVm->hPartition, pvPage, uGpa, cb,
-                                 WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite);
+                                 WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite | WHvMapGpaRangeFlagExecute);
     if (FAILED(hrc))
     {
         VhLog("whv: map MMIO page @ %#llx failed: %#lx", (unsigned long long)uGpa, (unsigned long)hrc);

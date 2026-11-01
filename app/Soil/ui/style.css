@@ -32,6 +32,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 .pick{flex:1;min-width:0;display:flex;align-items:center;gap:12px;min-height:40px;padding:0;border:0;background:none;text-align:left;color:inherit}
 .dot{flex:none;width:10px;height:10px;border-radius:50%;background:var(--ok)}
 .item[data-status="stopped"] .dot{background:none;box-shadow:inset 0 0 0 1.5px var(--ink2)}
+.item[data-status="idle"] .dot{background:none;box-shadow:inset 0 0 0 1.5px var(--ink)}
 .item.busy .dot{background:var(--off)}
 .tx{display:flex;flex-direction:column;min-width:0}
 .t{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

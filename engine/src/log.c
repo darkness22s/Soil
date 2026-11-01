@@ -16,16 +16,27 @@ void VhLogSetFile(FILE *pFile)
 void VhLog(const char *pszFmt, ...)
 {
     FILE *pOut = g_pLog ? g_pLog : stderr;
-    va_list va;
+    char szLine[8192];
     SYSTEMTIME st;
     GetLocalTime(&st);
-    fprintf(pOut, "[%02u:%02u:%02u.%03u] ",
-            st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+    int cchPrefix = snprintf(szLine, sizeof(szLine), "[%02u:%02u:%02u.%03u] ",
+                             st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+    if (cchPrefix < 0 || (size_t)cchPrefix >= sizeof(szLine) - 2)
+        return;
+
+    va_list va;
     va_start(va, pszFmt);
-    vfprintf(pOut, pszFmt, va);
+    int cchBody = vsnprintf(szLine + cchPrefix, sizeof(szLine) - (size_t)cchPrefix - 2,
+                            pszFmt, va);
     va_end(va);
-    fputc('\n', pOut);
-    /* deliberately no fflush: log lines land in the CRT buffer and are
-     * written in 4KB chunks. A per-line flush turns every device-access
-     * trace into a syscall on the vCPU thread and dilates guest time. */
+    if (cchBody < 0)
+        return;
+
+    size_t cbBody = (size_t)cchBody;
+    size_t cbMaxBody = sizeof(szLine) - (size_t)cchPrefix - 2;
+    if (cbBody > cbMaxBody)
+        cbBody = cbMaxBody;
+    size_t cbLine = (size_t)cchPrefix + cbBody;
+    szLine[cbLine++] = '\n';
+    (void)fwrite(szLine, 1, cbLine, pOut);
 }

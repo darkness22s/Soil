@@ -295,18 +295,16 @@ void VhDevPitTick(VH_VM *pVm, u64 nsNow)
                only when the previous tick has already been delivered (IRQ0 not
                still pending), so ticks are never dropped and a backlog is
                caught up one wake at a time */
-            static u64 s_cLastPeriod = 0;
-            static u64 s_uLastStart = 0;
-            if (pCh->startNs != s_uLastStart)
+            if (pCh->startNs != pVm->pit.startNsSeen)
             {
-                s_uLastStart = pCh->startNs;
-                s_cLastPeriod = 0;
+                pVm->pit.startNsSeen = pCh->startNs;
+                pVm->pit.cPeriods = 0;
             }
             u64 cPeriods = cElapsed / uReload;
-            if (cPeriods > s_cLastPeriod && !(pVm->irqs.pic.master.irr & 0x01))
+            if (cPeriods > pVm->pit.cPeriods && !(pVm->irqs.pic.master.irr & 0x01))
             {
                 VhDevRaiseIrq(pVm, 0);
-                s_cLastPeriod++;
+                pVm->pit.cPeriods++;
                 pVm->cTicks++;
             }
         }
@@ -1074,7 +1072,15 @@ static void uartOutThunk(void *pvUser, u8 b)
 void VhDevInit(VH_VM *pVm)
 {
     InitializeCriticalSection(&s_csDev);
+    VhDevResetState(pVm);
+}
 
+/*
+ * Device-model defaults WITHOUT the lock setup: safe to call repeatedly,
+ * e.g. after a failed snapshot restore that dumped stale device structs.
+ */
+void VhDevResetState(VH_VM *pVm)
+{
     /* PIC: BIOS-ish state - all masked, vector bases 0x08/0x70 until reprogrammed */
     pVm->irqs.pic.master.imr = 0xFF;
     pVm->irqs.pic.slave.imr = 0xFF;
@@ -1105,4 +1111,15 @@ void VhDevInit(VH_VM *pVm)
     pVm->i8042.kbd.fEnabled = 1;
     pVm->i8042.aux.fEnabled = 1;
     pVm->i8042.statusFlags = 0x04;
+}
+
+/*
+ * After a snapshot load the device structs carry data from a previous
+ * process lifetime - host-side function pointers must be re-anchored to the
+ * live addresses of this process before any guest I/O can happen.
+ */
+void VhDevPostRestoreFixup(VH_VM *pVm)
+{
+    pVm->uart.pfnOut = uartOutThunk;
+    pVm->uart.pvOutUser = pVm;
 }

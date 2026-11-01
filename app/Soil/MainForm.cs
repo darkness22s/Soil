@@ -8,11 +8,14 @@ public sealed class MainForm : Form
     private readonly WebView2 m_web = new() { Dock = DockStyle.Fill };
     private readonly string m_url;
     private readonly SoilPaths m_paths;
+    private readonly VmManager m_vmManager;
+    private bool m_minimized;
 
-    public MainForm(string url, SoilPaths paths)
+    public MainForm(string url, SoilPaths paths, VmManager vmManager)
     {
         m_url = url;
         m_paths = paths;
+        m_vmManager = vmManager;
         Text = "Soil";
         StartPosition = FormStartPosition.CenterScreen;
         ClientSize = new Size(1440, 900);
@@ -21,6 +24,38 @@ public sealed class MainForm : Form
         m_web.AllowExternalDrop = false;
         Controls.Add(m_web);
         Load += OnLoaded;
+        Resize += OnResized;
+    }
+
+    // Idle mode: while the window is minimized the guests are parked — the
+    // snapshot file is all that remains of them, no process at all. Opening
+    // the window again calls them back with a snapshot resume.
+    private void OnResized(object? sender, EventArgs e)
+    {
+        var minimized = WindowState == FormWindowState.Minimized;
+        if (minimized == m_minimized)
+            return;
+        m_minimized = minimized;
+        if (minimized)
+        {
+            try
+            {
+                m_vmManager.IdleAll();
+            }
+            catch
+            {
+            }
+        }
+        else
+        {
+            try
+            {
+                m_vmManager.ResumeAll();
+            }
+            catch
+            {
+            }
+        }
     }
 
     private async void OnLoaded(object? sender, EventArgs e)

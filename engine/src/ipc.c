@@ -148,6 +148,8 @@ static unsigned __stdcall VhIpcInputThread(void *pvArg)
 static unsigned __stdcall VhIpcFrameThread(void *pvArg)
 {
     VH_VM *pVm = (VH_VM *)pvArg;
+    int fSnapPendAck = 0;           /* requested; waiting for the run loop */
+    u64 nsSnapWait = 0;
 
     while (!pVm->fStop)
     {
@@ -159,13 +161,54 @@ static unsigned __stdcall VhIpcFrameThread(void *pvArg)
             break;
         }
 
-        if (g_pSh && pVm->mem.pbRam && pVm->mem.gpaFb)
+        if (g_pSh && pVm->fSnapWorking)
+        {
+            /* device state is frozen; skip frame copies for now */
+            Sleep(10);
+            continue;
+        }
+
+        /* snapshot request: latch the path, ask the run loop to park, ack
+           once the save has finished (or on an absurd stall) */
+        if (g_pSh && g_pSh->uCmd == 1 && !fSnapPendAck)
+        {
+            char szPath[sizeof(g_pSh->szCmd)];
+            memcpy(szPath, g_pSh->szCmd, sizeof(szPath));
+            szPath[sizeof(szPath) - 1] = '\0';
+            if (szPath[0])
+            {
+                memcpy(pVm->szSnapPath, szPath, sizeof(pVm->szSnapPath));
+                pVm->fSnapWanted = true;
+                VhWhvCancelRun(pVm);
+                fSnapPendAck = 1;
+                nsSnapWait = VhGuestNowNs();
+                VhLog("ipc: snapshot requested at '%s'", szPath);
+            }
+            g_pSh->uCmd = 0;        /* consumed; ack = 2 comes later */
+        }
+
+        if (fSnapPendAck && !pVm->fSnapWanted && !pVm->fSnapWorking)
+        {
+            g_pSh->uCmd = 2;        /* done (success or not) */
+            fSnapPendAck = 0;
+        }
+        else if (fSnapPendAck && VhGuestNowNs() - nsSnapWait > 120000000000ull)
+        {
+            VhLog("ipc: snapshot wait timed out - acking anyway");
+            g_pSh->uCmd = 2;
+            fSnapPendAck = 0;
+        }
+
+        if (g_pSh && pVm->mem.pbRam && pVm->mem.gpaFb && !fSnapPendAck)
         {
             VhFbSnapshot(pVm, g_pSh->abFrame);
             InterlockedIncrement((volatile LONG *)&g_pSh->uSeq);
         }
         Sleep(66);
     }
+
+    if (fSnapPendAck && g_pSh)
+        g_pSh->uCmd = 2;
     return 0;
 }
 
