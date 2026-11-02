@@ -1,0 +1,51 @@
+name: Build Soil MSI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'engine/**'
+      - '.github/workflows/build-msi.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out source and guest images
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Set up WinLibs MinGW-w64
+        uses: bwoodsend/setup-winlibs-action@v1
+
+      - name: Build VM engine
+        shell: pwsh
+        run: .\engine\build.ps1 -Gcc (Get-Command gcc).Source
+
+      - name: Install WiX Toolset
+        shell: pwsh
+        run: dotnet tool install --global wix --version 4.0.5
+
+      - name: Build MSI
+        shell: pwsh
+        run: .\app\build.ps1 -SkipEngine
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Soil-4.2.0-x64
+          path: app/dist/Soil-4.2.0-x64.msi
+          if-no-files-found: error
+          retention-days: 30
