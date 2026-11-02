@@ -36,7 +36,7 @@ jobs:
 
       - name: Install WiX Toolset
         shell: pwsh
-        run: dotnet tool install --global wix --version 4.0.5
+        run: dotnet tool install --global wix --version 5.0.2
 
       - name: Build MSI
         shell: pwsh
