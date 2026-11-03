@@ -856,23 +856,51 @@
   $('#open-skill').addEventListener('click', async () => {
     const dialog = $('#dlg-skill');
     const content = $('#skill-content');
+    const results = $('#skill-results');
+    const button = $('#open-skill');
     dialog.showModal();
+    button.disabled = true;
+    button.querySelector('span').textContent = 'Installing…';
     content.textContent = 'Loading Soil commands…';
+    results.textContent = 'Looking for AI assistants…';
     try {
-      const response = await fetch('/api/skill', { cache: 'no-store' });
-      if (!response.ok) throw new Error('The Soil skill could not be loaded.');
-      content.textContent = await response.text();
+      const [installResults, skillResponse] = await Promise.all([
+        fileJson('/api/skill/install', { method: 'POST' }),
+        fetch('/api/skill', { cache: 'no-store' })
+      ]);
+      if (!skillResponse.ok) throw new Error('The Soil skill could not be loaded.');
+      content.textContent = await skillResponse.text();
+      results.replaceChildren();
+      for (const item of installResults) {
+        const row = document.createElement('div');
+        row.className = 'install-result ' + item.status;
+        const title = document.createElement('strong');
+        title.textContent = item.agent + ': ' + ({
+          installed: 'installed',
+          already_installed: 'already installed',
+          conflict: 'existing skill left unchanged',
+          not_detected: 'not detected',
+          error: 'installation failed'
+        }[item.status] || item.status);
+        row.append(title);
+        if (item.path) {
+          const path = document.createElement('code');
+          path.textContent = item.path;
+          row.append(path);
+        }
+        if (item.message) {
+          const message = document.createElement('span');
+          message.textContent = item.message;
+          row.append(message);
+        }
+        results.append(row);
+      }
     } catch (error) {
+      results.textContent = 'Could not install the Soil skill: ' + error.message;
       content.textContent = error.message;
-    }
-  });
-  $('#copy-skill').addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText($('#skill-content').textContent);
-      $('#copy-skill').textContent = 'Copied';
-      setTimeout(() => { $('#copy-skill').textContent = 'Copy skill'; }, 1600);
-    } catch (_) {
-      $('#skill-content').focus();
+    } finally {
+      button.disabled = false;
+      button.querySelector('span').textContent = 'Install Skill';
     }
   });
   $('#close-skill').addEventListener('click', () => $('#dlg-skill').close());

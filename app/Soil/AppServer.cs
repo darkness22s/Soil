@@ -100,6 +100,13 @@ public sealed class AppServer : IDisposable
                 ? Results.File(skillPath, "text/markdown; charset=utf-8")
                 : Results.NotFound();
         });
+        m_app.MapPost("/api/skill/install", () =>
+        {
+            var skillPath = Path.Combine(AppContext.BaseDirectory, "skill", "soil-control", "SKILL.md");
+            if (!File.Exists(skillPath))
+                return Results.NotFound(new { error = "The Soil skill could not be found." });
+            return Results.Json(SkillInstaller.Install(skillPath), JsonOptions.Web);
+        });
 
         m_app.MapGet("/api/info", () => Results.Json(new
         {

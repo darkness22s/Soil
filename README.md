@@ -86,9 +86,10 @@ $soil = (Get-Process -Name Soil | Select-Object -First 1 -ExpandProperty Path)
 & $soil vm stop '<vm-id>'
 ```
 
-`Soil.exe vm help` lists supported commands. The Skill button at the bottom of
-Soil provides an AI-ready `soil-control` skill with command examples and safety
-notes.
+`Soil.exe vm help` lists supported commands. The **Install Skill** button at the
+bottom of Soil installs the AI-ready `soil-control` skill into detected Claude
+Code, Codex, Sparky, and OpenCode user skill folders. Existing skills are never
+overwritten; the button reports each installation result and destination.
 
 ## SDK
 
