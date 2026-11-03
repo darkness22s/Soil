@@ -853,6 +853,29 @@
       $('#soil-home').textContent = info.home;
     } catch (_) {}
   });
+  $('#open-skill').addEventListener('click', async () => {
+    const dialog = $('#dlg-skill');
+    const content = $('#skill-content');
+    dialog.showModal();
+    content.textContent = 'Loading Soil commands…';
+    try {
+      const response = await fetch('/api/skill', { cache: 'no-store' });
+      if (!response.ok) throw new Error('The Soil skill could not be loaded.');
+      content.textContent = await response.text();
+    } catch (error) {
+      content.textContent = error.message;
+    }
+  });
+  $('#copy-skill').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText($('#skill-content').textContent);
+      $('#copy-skill').textContent = 'Copied';
+      setTimeout(() => { $('#copy-skill').textContent = 'Copy skill'; }, 1600);
+    } catch (_) {
+      $('#skill-content').focus();
+    }
+  });
+  $('#close-skill').addEventListener('click', () => $('#dlg-skill').close());
   $('#open-home').addEventListener('click', () => openFile(''));
   $('#close-set').addEventListener('click', () => $('#dlg-set').close());
   $('#add').addEventListener('click', () => {

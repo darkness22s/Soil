@@ -3,13 +3,15 @@ namespace Soil;
 internal static class Program
 {
     [STAThread]
-    private static void Main(string[] args)
+    private static int Main(string[] args)
     {
         var paths = SoilPaths.CreateDefault();
         paths.Ensure();
 
         if (args.Any(arg => string.Equals(arg, "--bootstrap", StringComparison.OrdinalIgnoreCase)))
-            return;
+            return 0;
+        if (args.Length > 0)
+            return SoilCli.Run(args, paths);
 
         ApplicationConfiguration.Initialize();
 
@@ -26,5 +28,6 @@ internal static class Program
         {
             manager.StopAll();
         }
+        return 0;
     }
 }

@@ -93,6 +93,13 @@ public sealed class AppServer : IDisposable
     private void MapApi()
     {
         m_app.MapGet("/api/health", () => Results.Json(new { ok = true }, JsonOptions.Web));
+        m_app.MapGet("/api/skill", () =>
+        {
+            var skillPath = Path.Combine(AppContext.BaseDirectory, "skill", "soil-control", "SKILL.md");
+            return File.Exists(skillPath)
+                ? Results.File(skillPath, "text/markdown; charset=utf-8")
+                : Results.NotFound();
+        });
 
         m_app.MapGet("/api/info", () => Results.Json(new
         {
@@ -283,6 +290,8 @@ public sealed class AppServer : IDisposable
         m_app.Start();
         Url = m_app.Urls.FirstOrDefault()
             ?? throw new InvalidOperationException("The local UI server did not bind a port.");
+        File.WriteAllText(m_paths.CliEndpointPath,
+            JsonSerializer.Serialize(new { url = Url }));
     }
 
     public void Dispose()
@@ -290,6 +299,19 @@ public sealed class AppServer : IDisposable
         try
         {
             m_app.StopAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
+        }
+        catch
+        {
+        }
+        try
+        {
+            if (File.Exists(m_paths.CliEndpointPath))
+            {
+                using var endpoint = JsonDocument.Parse(File.ReadAllText(m_paths.CliEndpointPath));
+                if (string.Equals(endpoint.RootElement.GetProperty("url").GetString(), Url,
+                        StringComparison.OrdinalIgnoreCase))
+                    File.Delete(m_paths.CliEndpointPath);
+            }
         }
         catch
         {

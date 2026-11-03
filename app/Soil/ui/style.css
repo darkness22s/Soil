@@ -171,3 +171,7 @@ dialog[open]::backdrop{animation:scrim .5s var(--ease) both}
 .preview-actions{display:flex;gap:8px;margin-top:auto;flex-wrap:wrap}
 @media (max-width:1100px){.files-body{grid-template-columns:minmax(0,1fr) 300px}.frow{grid-template-columns:24px minmax(0,1fr) 68px}.frow .fdate{display:none}}
 @media (max-width:820px){.files-body{grid-template-columns:1fr}.preview{display:none}.files-head{align-items:flex-start;flex-direction:column}.files-actions{width:100%}.files-actions button{flex:1}}
+.skill-button{display:flex;align-items:center;gap:10px;height:44px;padding:0 16px;border:1px solid var(--line);border-radius:12px;background:var(--bg);text-align:left;font-weight:600}
+.skill-button svg{width:18px;height:18px;flex:none}
+.skill-dlg{max-height:min(82vh,760px);overflow:auto}
+.skill-content{max-height:42vh;overflow:auto;margin:0;padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}

@@ -7,6 +7,12 @@ on:
       - 'app/**'
       - 'engine/**'
       - '.github/workflows/build-msi.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'engine/**'
+      - '.github/workflows/build-msi.yml'
   workflow_dispatch:
 
 permissions:

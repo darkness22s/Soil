@@ -76,6 +76,20 @@ script checks `app\images`, then the existing local private staging folder.
 Use the Files tab to browse the Soil home. Use Settings to open the home folder.
 The host API listens on loopback only.
 
+With Soil running, control VMs from PowerShell using the installed executable:
+
+```powershell
+$soil = (Get-Process -Name Soil | Select-Object -First 1 -ExpandProperty Path)
+& $soil vm list
+& $soil vm create 'workbox' --size m
+& $soil vm start '<vm-id>'
+& $soil vm stop '<vm-id>'
+```
+
+`Soil.exe vm help` lists supported commands. The Skill button at the bottom of
+Soil provides an AI-ready `soil-control` skill with command examples and safety
+notes.
+
 ## SDK
 
 The `.sol` SDK lives in `soil-sdk`. See `soil-sdk/README.md` and
