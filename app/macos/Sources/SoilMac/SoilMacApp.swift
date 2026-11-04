@@ -1,10 +1,12 @@
 import AppKit
+import Darwin
 import SwiftUI
 
 @MainActor
 final class VMController: ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var isIdle = false
+    @Published private(set) var monitorReady = false
     @Published private(set) var status = "Stopped"
     @Published private(set) var display = VNCClient()
 
@@ -57,6 +59,7 @@ final class VMController: ObservableObject {
                     self?.process = nil
                     self?.monitor?.close()
                     self?.monitor = nil
+                    self?.monitorReady = false
                     self?.display.disconnect()
                     if let directory = self?.vncSocketDirectory {
                         try? FileManager.default.removeItem(atPath: directory)
@@ -77,6 +80,7 @@ final class VMController: ObservableObject {
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 do {
                     try qmp.connect(path: monitorPath)
+                    Task { @MainActor in self?.monitorReady = true }
                     if FileManager.default.fileExists(atPath: marker.path) {
                         try qmp.loadSnapshot(named: "Soil")
                         Task { @MainActor in
@@ -138,6 +142,65 @@ final class VMController: ObservableObject {
                 Task { @MainActor in self?.status = "Could not change idle state: \(error.localizedDescription)" }
             }
         }
+    }
+
+    func runSmokeTest() async {
+        start()
+        let booted = await waitFor(timeout: 180, {
+            (self.display.image != nil && self.monitorReady)
+                || self.status.hasPrefix("Could not start:")
+                || self.status.hasPrefix("QEMU monitor unavailable:")
+        })
+        guard booted, display.image != nil, monitorReady else {
+            smokeTestFailed("guest did not boot and produce a framebuffer")
+        }
+        print("[smoke] Guest booted and framebuffer received")
+
+        setIdle(true)
+        guard await waitFor(timeout: 10, { self.isIdle }) else {
+            smokeTestFailed("QEMU did not pause")
+        }
+        setIdle(false)
+        guard await waitFor(timeout: 10, { !self.isIdle }) else {
+            smokeTestFailed("QEMU did not resume")
+        }
+        print("[smoke] QEMU pause/resume passed")
+
+        stop()
+        guard await waitFor(timeout: 60, { !self.isRunning }) else {
+            smokeTestFailed("QEMU did not stop after saving its snapshot")
+        }
+        print("[smoke] Snapshot saved")
+
+        start()
+        guard await waitFor(timeout: 180, {
+            self.display.image != nil && self.status == "Restored saved snapshot"
+        }) else {
+            smokeTestFailed("saved snapshot was not restored")
+        }
+        print("[smoke] Snapshot restored")
+
+        stop()
+        guard await waitFor(timeout: 60, { !self.isRunning }) else {
+            smokeTestFailed("QEMU did not stop after the restore test")
+        }
+        print("[smoke] PASS")
+        Darwin.exit(EXIT_SUCCESS)
+    }
+
+    private func waitFor(timeout: TimeInterval, _ condition: () -> Bool) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+        return condition()
+    }
+
+    private func smokeTestFailed(_ message: String) -> Never {
+        fputs("[smoke] FAIL: \(message) (status: \(status))\n", stderr)
+        process?.terminate()
+        Darwin.exit(EXIT_FAILURE)
     }
 
     private func prepareDisk(images: URL, qemu: URL) throws -> URL {
@@ -207,6 +270,11 @@ struct SoilMacApp: App {
         WindowGroup {
             ContentView(vm: vm)
                 .frame(minWidth: 700, minHeight: 480)
+                .task {
+                    if ProcessInfo.processInfo.arguments.contains("--smoke-test") {
+                        await vm.runSmokeTest()
+                    }
+                }
         }
         .commands {
             CommandGroup(replacing: .newItem) { }

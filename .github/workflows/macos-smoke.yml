@@ -1,0 +1,31 @@
+name: macOS app smoke test
+
+on:
+  pull_request:
+    paths:
+      - "app/macos/**"
+      - "app/images/**"
+      - ".github/workflows/macos-smoke.yml"
+  workflow_dispatch:
+
+jobs:
+  apple-silicon-smoke:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install QEMU
+        run: brew install qemu
+
+      - name: Install guest images
+        run: |
+          images="$HOME/Library/Application Support/Soil/images"
+          mkdir -p "$images"
+          cp app/images/{vmlinuz64,core2.gz,soil.squashfs} "$images/"
+
+      - name: Build macOS app
+        run: ./app/macos/build.sh
+
+      - name: Run guest, idle, and snapshot smoke test
+        run: app/macos/dist/Soil.app/Contents/MacOS/SoilMac --smoke-test
