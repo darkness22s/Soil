@@ -33,7 +33,9 @@ jobs:
           dotnet-version: 8.0.x
       - name: Install MinGW-w64
         shell: pwsh
-        run: choco install winlibs --yes --no-progress
+        run: |
+          choco install winlibs --yes --no-progress
+          "C:\ProgramData\chocolatey\lib\winlibs\tools\mingw64\bin" >> $env:GITHUB_PATH
       - name: Install WiX Toolset
         shell: pwsh
         run: dotnet tool install --global wix --version 5.*
