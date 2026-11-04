@@ -8,8 +8,9 @@ performance than native virtualization.
 This is a limited preview, not a port of the Windows desktop application. The
 QEMU guest runs headlessly and its framebuffer and keyboard/mouse input are
 routed through an in-app VNC viewer over a private Unix-domain socket. Machine
-management, the Files view, app API, snapshots, SSH forwarding, and the custom VM
-devices remain Windows-only.
+management, the Files view, app API, SSH forwarding, and the custom VM devices
+remain Windows-only. macOS uses QEMU-native snapshots rather than the Windows
+snapshot format.
 
 ## Requirements
 
@@ -32,9 +33,12 @@ open ./app/macos/dist/Soil.app
 ```
 
 The app's Start button launches QEMU without a host display or terminal; the guest
-screen and keyboard/mouse input appear in the Soil window over a VNC connection
-bound only to loopback. Stop terminates QEMU. The launcher searches the standard
-Apple Silicon and Intel Homebrew binary paths for `qemu-system-x86_64`.
+screen and keyboard/mouse input appear in the Soil window over a private Unix-domain
+VNC connection. When the app becomes inactive, the guest is paused and resumes when
+the app becomes active again. Stop saves a QEMU snapshot in the persistent QCOW2
+disk overlay; the next launch restores that saved state. The launcher searches the
+standard Apple Silicon and Intel Homebrew binary paths for `qemu-system-x86_64`
+and `qemu-img`.
 
 ## Current limitations
 

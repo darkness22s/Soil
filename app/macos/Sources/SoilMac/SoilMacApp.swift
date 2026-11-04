@@ -4,22 +4,33 @@ import SwiftUI
 @MainActor
 final class VMController: ObservableObject {
     @Published private(set) var isRunning = false
+    @Published private(set) var isIdle = false
     @Published private(set) var status = "Stopped"
     @Published private(set) var display = VNCClient()
 
     private var process: Process?
     private var vncSocketDirectory: String?
+    private var monitor: QMPClient?
+    private var snapshotMarker: URL?
 
     func start() {
         guard process == nil else { return }
         do {
             let images = try resolveImages()
             let qemu = try resolveQemu()
+            let disk = try prepareDisk(images: images, qemu: qemu)
+            let machineDirectory = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
+                                                               appropriateFor: nil, create: true)
+                .appendingPathComponent("Soil/machines/default", isDirectory: true)
+            try FileManager.default.createDirectory(at: machineDirectory, withIntermediateDirectories: true)
+            let marker = machineDirectory.appendingPathComponent("snapshot.marker")
+            snapshotMarker = marker
             let vm = Process()
             let socketDirectory = "/tmp/soil-vnc-\(UUID().uuidString)"
             try FileManager.default.createDirectory(atPath: socketDirectory, withIntermediateDirectories: false,
                                                     attributes: [.posixPermissions: 0o700])
             let socketPath = "\(socketDirectory)/display.sock"
+            let monitorPath = "\(socketDirectory)/monitor.sock"
             vncSocketDirectory = socketDirectory
             vm.executableURL = qemu
             vm.arguments = [
@@ -31,9 +42,10 @@ final class VMController: ObservableObject {
                 "-kernel", images.appendingPathComponent("vmlinuz64").path,
                 "-initrd", images.appendingPathComponent("core2.gz").path,
                 "-append", "console=ttyS0 quiet loglevel=3 acpi=off noapic nolapic mitigations=off nozswap",
-                "-drive", "file=\(images.appendingPathComponent("soil.squashfs").path),format=raw,if=virtio,readonly=on",
+                "-drive", "file=\(disk.path),format=qcow2,if=virtio",
                 "-display", "none",
                 "-vnc", "unix:\(socketPath)",
+                "-qmp", "unix:\(monitorPath),server=on,wait=off",
                 "-serial", "null",
                 "-monitor", "none",
                 "-no-reboot"
@@ -43,12 +55,15 @@ final class VMController: ObservableObject {
             vm.terminationHandler = { [weak self] ended in
                 Task { @MainActor in
                     self?.process = nil
+                    self?.monitor?.close()
+                    self?.monitor = nil
                     self?.display.disconnect()
                     if let directory = self?.vncSocketDirectory {
                         try? FileManager.default.removeItem(atPath: directory)
                     }
                     self?.vncSocketDirectory = nil
                     self?.isRunning = false
+                    self?.isIdle = false
                     self?.status = ended.terminationStatus == 0 ? "Stopped" : "QEMU exited (\(ended.terminationStatus))"
                 }
             }
@@ -57,6 +72,27 @@ final class VMController: ObservableObject {
             isRunning = true
             status = "Starting headless VM…"
             display.connect(socketPath: socketPath)
+            let qmp = QMPClient()
+            monitor = qmp
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                do {
+                    try qmp.connect(path: monitorPath)
+                    if FileManager.default.fileExists(atPath: marker.path) {
+                        try qmp.loadSnapshot(named: "Soil")
+                        Task { @MainActor in
+                            if self?.process != nil { self?.status = "Restored saved snapshot" }
+                        }
+                    } else {
+                        Task { @MainActor in
+                            if self?.process != nil { self?.status = "Running" }
+                        }
+                    }
+                } catch {
+                    Task { @MainActor in
+                        if self?.process != nil { self?.status = "QEMU monitor unavailable: \(error.localizedDescription)" }
+                    }
+                }
+            }
         } catch {
             if let directory = vncSocketDirectory {
                 try? FileManager.default.removeItem(atPath: directory)
@@ -68,8 +104,68 @@ final class VMController: ObservableObject {
 
     func stop() {
         guard let process else { return }
-        status = "Stopping…"
-        process.terminate()
+        guard let monitor, let marker = snapshotMarker else {
+            status = "Stopping without snapshot…"
+            process.terminate()
+            return
+        }
+        status = "Saving snapshot…"
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try monitor.saveSnapshot(named: "Soil")
+                try Data("Soil".utf8).write(to: marker, options: .atomic)
+                monitor.quit()
+            } catch {
+                monitor.quit()
+                Task { @MainActor in
+                    self?.status = "Snapshot failed: \(error.localizedDescription)"
+                    process.terminate()
+                }
+            }
+        }
+    }
+
+    func setIdle(_ idle: Bool) {
+        guard isRunning, isIdle != idle, let monitor else { return }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            do {
+                if idle { try monitor.pause() } else { try monitor.resume() }
+                Task { @MainActor in
+                    self?.isIdle = idle
+                    self?.status = idle ? "Paused while inactive" : "Running"
+                }
+            } catch {
+                Task { @MainActor in self?.status = "Could not change idle state: \(error.localizedDescription)" }
+            }
+        }
+    }
+
+    private func prepareDisk(images: URL, qemu: URL) throws -> URL {
+        let manager = FileManager.default
+        let machineDirectory = try manager.url(for: .applicationSupportDirectory, in: .userDomainMask,
+                                               appropriateFor: nil, create: true)
+            .appendingPathComponent("Soil/machines/default", isDirectory: true)
+        try manager.createDirectory(at: machineDirectory, withIntermediateDirectories: true)
+        let overlay = machineDirectory.appendingPathComponent("disk.qcow2")
+        guard !manager.fileExists(atPath: overlay.path) else { return overlay }
+        let qemuImg = qemu.deletingLastPathComponent().appendingPathComponent("qemu-img")
+        guard manager.isExecutableFile(atPath: qemuImg.path) else {
+            throw NSError(domain: "SoilMac", code: 3, userInfo: [NSLocalizedDescriptionKey:
+                "qemu-img was not found next to QEMU. Reinstall it with Homebrew: brew install qemu"])
+        }
+        let create = Process()
+        create.executableURL = qemuImg
+        create.arguments = ["create", "-f", "qcow2", "-F", "raw", "-b",
+                            images.appendingPathComponent("soil.squashfs").path, overlay.path]
+        create.standardOutput = FileHandle.nullDevice
+        create.standardError = FileHandle.nullDevice
+        try create.run()
+        create.waitUntilExit()
+        guard create.terminationStatus == 0 else {
+            throw NSError(domain: "SoilMac", code: 4, userInfo: [NSLocalizedDescriptionKey:
+                "Could not create the persistent QEMU disk overlay"])
+        }
+        return overlay
     }
 
     private func resolveImages() throws -> URL {
@@ -120,6 +216,7 @@ struct SoilMacApp: App {
 
 struct ContentView: View {
     @ObservedObject var vm: VMController
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -136,9 +233,9 @@ struct ContentView: View {
                 .keyboardShortcut(.defaultAction)
                 .controlSize(.large)
             }
-            Label(vm.display.isConnected ? "Running · display connected" : vm.status,
-                  systemImage: vm.display.isConnected ? "play.circle.fill" : "stop.circle")
-                .foregroundStyle(vm.display.isConnected ? .green : .secondary)
+            Label(vm.display.isConnected ? (vm.isIdle ? "Paused · display connected" : "Running · display connected") : vm.status,
+                  systemImage: vm.display.isConnected ? (vm.isIdle ? "pause.circle.fill" : "play.circle.fill") : "stop.circle")
+                .foregroundStyle(vm.display.isConnected && !vm.isIdle ? .green : .secondary)
             Group {
                 if vm.display.image != nil {
                     VNCDisplayView(client: vm.display)
@@ -159,5 +256,8 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(24)
+        .onChange(of: scenePhase) { phase in
+            vm.setIdle(phase != .active)
+        }
     }
 }
