@@ -155,6 +155,7 @@ final class VMController: ObservableObject {
             (self.display.image != nil && self.monitorReady)
                 || self.status.hasPrefix("Could not start:")
                 || self.status.hasPrefix("QEMU monitor unavailable:")
+                || !self.isRunning
         })
         guard booted, display.image != nil, monitorReady else {
             smokeTestFailed("guest did not boot and produce a framebuffer")
