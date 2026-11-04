@@ -1,9 +1,26 @@
 # Builds the Soil VM engine (vmhost.exe) with the WinLibs mingw-w64 toolchain.
 param(
-    [string]$Gcc = "C:\Users\Lenovo\winlibs\mingw64\bin\gcc.exe"
+    [string]$Gcc = ""
 )
 
 $ErrorActionPreference = "Continue"
+if ([string]::IsNullOrWhiteSpace($Gcc)) {
+    $localGcc = "C:\Users\Lenovo\winlibs\mingw64\bin\gcc.exe"
+    $gccCommand = Get-Command gcc -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $localGcc) {
+        $Gcc = $localGcc
+    } elseif ($gccCommand) {
+        $Gcc = $gccCommand.Source
+    } else {
+        throw "MinGW-w64 gcc was not found. Install WinLibs or pass -Gcc <path>."
+    }
+} elseif (-not (Test-Path -LiteralPath $Gcc)) {
+    $gccCommand = Get-Command $Gcc -ErrorAction SilentlyContinue
+    if (-not $gccCommand) {
+        throw "MinGW-w64 gcc '$Gcc' was not found. Install WinLibs or pass -Gcc <path>."
+    }
+    $Gcc = $gccCommand.Source
+}
 $src = Join-Path $PSScriptRoot "src"
 $bin = Join-Path $PSScriptRoot "bin"
 New-Item -ItemType Directory -Force -Path $bin | Out-Null
@@ -49,14 +66,15 @@ $args = @(
     "-o", $out
 ) + $sources + @("-lwinhvplatform", "-lgdi32", "-luser32", "-lws2_32", "-liphlpapi", "-lwinmm")
 
-Write-Host "gcc $($args -join ' ')"
-$p = Start-Process -FilePath $Gcc -ArgumentList $args -NoNewWindow -Wait -PassThru `
-    -RedirectStandardOutput (Join-Path $bin "build.out.log") `
-    -RedirectStandardError (Join-Path $bin "build.err.log")
-if ($p.ExitCode -ne 0) {
-    Get-Content (Join-Path $bin "build.err.log") | Write-Host
-    Write-Host "BUILD FAILED ($($p.ExitCode))"
-    exit $p.ExitCode
+Write-Host "Using gcc: $Gcc"
+$stdout = Join-Path $bin "build.out.log"
+$stderr = Join-Path $bin "build.err.log"
+& $Gcc @args 1> $stdout 2> $stderr
+$exitCode = $LASTEXITCODE
+if ($exitCode -ne 0) {
+    Get-Content $stderr | Write-Host
+    Write-Host "BUILD FAILED ($exitCode)"
+    exit $exitCode
 }
 Write-Host "BUILD OK: $out"
 exit 0
