@@ -245,7 +245,7 @@ int VhWhvSetDeliverabilityNotification(VH_VM *pVm, bool fEnable)
     WHV_REGISTER_VALUE val;
     memset(&val, 0, sizeof(val));
     val.DeliverabilityNotifications.InterruptNotification = fEnable ? 1 : 0;
-    return VhWhvSetReg(pVm, WHvRegisterDeliverabilityNotifications, val);
+    return VhWhvSetReg(pVm, WHvX64RegisterDeliverabilityNotifications, val);
 }
 
 /*

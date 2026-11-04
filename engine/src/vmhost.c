@@ -190,7 +190,7 @@ static void VhUpdateInterrupts(VH_VM *pVm)
 /* ------------------------------------------------------------------ */
 /* Run loop exit handling                                             */
 /* ------------------------------------------------------------------ */
-static void VhAdvanceRip(VH_VM *pVm, const WHV_X64_VP_EXIT_CONTEXT *pVpCtx)
+static void VhAdvanceRip(VH_VM *pVm, const WHV_VP_EXIT_CONTEXT *pVpCtx)
 {
     WHV_REGISTER_NAME aenm[] = { WHvX64RegisterRip, WHvX64RegisterRflags };
     WHV_REGISTER_VALUE av[2];
