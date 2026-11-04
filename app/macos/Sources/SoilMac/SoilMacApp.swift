@@ -5,10 +5,10 @@ import SwiftUI
 final class VMController: ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var status = "Stopped"
-    @Published var log = ""
+    @Published private(set) var display = VNCClient()
 
     private var process: Process?
-    private var outputPipe: Pipe?
+    private var vncSocketDirectory: String?
 
     func start() {
         guard process == nil else { return }
@@ -16,7 +16,11 @@ final class VMController: ObservableObject {
             let images = try resolveImages()
             let qemu = try resolveQemu()
             let vm = Process()
-            let output = Pipe()
+            let socketDirectory = "/tmp/soil-vnc-\(UUID().uuidString)"
+            try FileManager.default.createDirectory(atPath: socketDirectory, withIntermediateDirectories: false,
+                                                    attributes: [.posixPermissions: 0o700])
+            let socketPath = "\(socketDirectory)/display.sock"
+            vncSocketDirectory = socketDirectory
             vm.executableURL = qemu
             vm.arguments = [
                 "-machine", "q35",
@@ -28,37 +32,37 @@ final class VMController: ObservableObject {
                 "-initrd", images.appendingPathComponent("core2.gz").path,
                 "-append", "console=ttyS0 quiet loglevel=3 acpi=off noapic nolapic mitigations=off nozswap",
                 "-drive", "file=\(images.appendingPathComponent("soil.squashfs").path),format=raw,if=virtio,readonly=on",
-                "-display", "cocoa",
-                "-serial", "stdio",
+                "-display", "none",
+                "-vnc", "unix:\(socketPath)",
+                "-serial", "null",
                 "-monitor", "none",
                 "-no-reboot"
             ]
-            vm.standardOutput = output
-            vm.standardError = output
+            vm.standardOutput = FileHandle.nullDevice
+            vm.standardError = FileHandle.nullDevice
             vm.terminationHandler = { [weak self] ended in
                 Task { @MainActor in
                     self?.process = nil
-                    self?.outputPipe = nil
+                    self?.display.disconnect()
+                    if let directory = self?.vncSocketDirectory {
+                        try? FileManager.default.removeItem(atPath: directory)
+                    }
+                    self?.vncSocketDirectory = nil
                     self?.isRunning = false
                     self?.status = ended.terminationStatus == 0 ? "Stopped" : "QEMU exited (\(ended.terminationStatus))"
                 }
             }
-            output.fileHandleForReading.readabilityHandler = { [weak self] handle in
-                let data = handle.availableData
-                guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-                Task { @MainActor in
-                    self?.log = String((self?.log ?? "") + text.suffix(12000))
-                }
-            }
             try vm.run()
             process = vm
-            outputPipe = output
             isRunning = true
-            status = "Running in QEMU (software emulation)"
-            log = ""
+            status = "Starting headless VM…"
+            display.connect(socketPath: socketPath)
         } catch {
-            status = "Could not start"
-            log = error.localizedDescription
+            if let directory = vncSocketDirectory {
+                try? FileManager.default.removeItem(atPath: directory)
+            }
+            vncSocketDirectory = nil
+            status = "Could not start: \(error.localizedDescription)"
         }
     }
 
@@ -132,16 +136,27 @@ struct ContentView: View {
                 .keyboardShortcut(.defaultAction)
                 .controlSize(.large)
             }
-            Label(vm.status, systemImage: vm.isRunning ? "play.circle.fill" : "stop.circle")
-                .foregroundStyle(vm.isRunning ? .green : .secondary)
-            Text("This preview launcher starts one guest using QEMU. It does not yet include the Windows app’s machine manager, Files view, snapshots, SSH integration, or Soil app API.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            TextEditor(text: $vm.log)
-                .font(.system(.caption, design: .monospaced))
-                .scrollContentBackground(.hidden)
-                .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+            Label(vm.display.isConnected ? "Running · display connected" : vm.status,
+                  systemImage: vm.display.isConnected ? "play.circle.fill" : "stop.circle")
+                .foregroundStyle(vm.display.isConnected ? .green : .secondary)
+            Group {
+                if vm.display.image != nil {
+                    VNCDisplayView(client: vm.display)
+                } else {
+                    VStack(spacing: 12) {
+                        Image(systemName: "display")
+                            .font(.system(size: 40))
+                            .foregroundStyle(.secondary)
+                        Text(vm.display.error ?? "Waiting for the guest display…")
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.black.opacity(0.9))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(24)
     }
