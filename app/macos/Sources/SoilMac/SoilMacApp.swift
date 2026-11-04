@@ -52,8 +52,13 @@ final class VMController: ObservableObject {
                 "-monitor", "none",
                 "-no-reboot"
             ]
-            vm.standardOutput = FileHandle.nullDevice
-            vm.standardError = FileHandle.nullDevice
+            if ProcessInfo.processInfo.arguments.contains("--smoke-test") {
+                vm.standardOutput = FileHandle.standardOutput
+                vm.standardError = FileHandle.standardError
+            } else {
+                vm.standardOutput = FileHandle.nullDevice
+                vm.standardError = FileHandle.nullDevice
+            }
             vm.terminationHandler = { [weak self] ended in
                 Task { @MainActor in
                     self?.process = nil
