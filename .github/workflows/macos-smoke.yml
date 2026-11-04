@@ -25,7 +25,7 @@ jobs:
           cp app/images/{vmlinuz64,core2.gz,soil.squashfs} "$images/"
 
       - name: Build macOS app
-        run: ./app/macos/build.sh
+        run: sh ./app/macos/build.sh
 
       - name: Run guest, idle, and snapshot smoke test
         run: app/macos/dist/Soil.app/Contents/MacOS/SoilMac --smoke-test
