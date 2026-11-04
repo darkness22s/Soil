@@ -1,6 +1,12 @@
 name: Build Soil Windows installer
 
 on:
+  push:
+    paths:
+      - app/**
+      - engine/**
+      - soil-sdk/**
+      - .github/workflows/windows-installer.yml
   workflow_dispatch:
     inputs:
       gcc:
@@ -14,7 +20,7 @@ permissions:
 
 jobs:
   build-installer:
-    runs-on: [self-hosted, Windows, X64, soil-windows-build]
+    runs-on: [self-hosted, Windows, X64, soil-whpx]
     timeout-minutes: 30
     env:
       SOIL_GCC: ${{ inputs.gcc }}
