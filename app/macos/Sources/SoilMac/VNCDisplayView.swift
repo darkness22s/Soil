@@ -25,7 +25,7 @@ final class VNCFramebufferView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor.black.setFill()
-        NSRectFill(bounds)
+        NSBezierPath(rect: bounds).fill()
         guard let image else { return }
         let imageSize = NSSize(width: image.width, height: image.height)
         let scale = min(bounds.width / imageSize.width, bounds.height / imageSize.height)

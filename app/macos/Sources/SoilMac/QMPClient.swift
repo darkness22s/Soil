@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-final class QMPClient {
+final class QMPClient: @unchecked Sendable {
     private var socketFD: Int32 = -1
     private let lock = NSLock()
     private var nextID = 1
@@ -11,7 +11,9 @@ final class QMPClient {
         for _ in 0..<40 {
             do {
                 let fd = try openSocket(path: path)
+                lock.lock()
                 socketFD = fd
+                lock.unlock()
                 _ = try readJSONLine(fd) // QMP greeting
                 _ = try execute("qmp_capabilities")
                 return

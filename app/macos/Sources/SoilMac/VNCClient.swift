@@ -43,7 +43,7 @@ final class VNCClient: ObservableObject {
                     self.error = error.localizedDescription
                 }
             }
-            self.closeSocket(fd: self.socketFD)
+            self.closeSocket(fd: connectionFD)
             Task { @MainActor in self.isConnected = false }
         }
     }
