@@ -40,7 +40,7 @@ final class VMController: ObservableObject {
                 "-accel", "tcg,thread=multi",
                 "-cpu", "max",
                 "-smp", "1",
-                "-m", "512",
+                "-m", "1024",
                 "-kernel", images.appendingPathComponent("vmlinuz64").path,
                 "-initrd", images.appendingPathComponent("core2.gz").path,
                 "-append", "console=ttyS0 quiet loglevel=3 acpi=off noapic nolapic mitigations=off nozswap",
