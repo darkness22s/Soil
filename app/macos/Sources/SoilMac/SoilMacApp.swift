@@ -20,6 +20,16 @@ final class VMController: ObservableObject {
         do {
             let images = try resolveImages()
             let qemu = try resolveQemu()
+            if ProcessInfo.processInfo.arguments.contains("--smoke-test") {
+                let kernel = try Data(contentsOf: images.appendingPathComponent("vmlinuz64"))
+                let magic = kernel.count >= 0x206
+                    ? String(decoding: kernel[0x202..<0x206], as: UTF8.self) : "<missing>"
+                let protocolVersion = kernel.count >= 0x208
+                    ? UInt16(kernel[0x206]) | (UInt16(kernel[0x207]) << 8) : 0
+                print("[smoke] QEMU: \(qemu.path)")
+                print("[smoke] Images: \(images.path)")
+                print("[smoke] Kernel size: \(kernel.count), magic: \(magic), protocol: 0x\(String(protocolVersion, radix: 16))")
+            }
             let disk = try prepareDisk(images: images, qemu: qemu)
             let machineDirectory = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
                                                                appropriateFor: nil, create: true)
