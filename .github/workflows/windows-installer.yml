@@ -1,0 +1,40 @@
+name: Build Soil Windows installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      gcc:
+        description: MinGW-w64 gcc executable path or command available on the runner
+        required: false
+        default: gcc
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-installer:
+    runs-on: [self-hosted, Windows, X64, soil-windows-build]
+    timeout-minutes: 30
+    env:
+      SOIL_GCC: ${{ inputs.gcc }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Install WiX Toolset
+        shell: pwsh
+        run: dotnet tool install --global wix --version 5.*
+      - name: Build Windows x64 MSI
+        shell: pwsh
+        run: .\app\build.ps1 -ImagesDir .\app\images -Gcc $env:SOIL_GCC
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Soil-Windows-x64-installer
+          path: app/dist/Soil-*-x64.msi
+          if-no-files-found: error
+          retention-days: 14
