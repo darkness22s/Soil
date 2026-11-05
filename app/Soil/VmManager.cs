@@ -15,12 +15,16 @@ namespace Soil;
 
 public sealed class VmManager
 {
-    private const int FrameWidth = 1024;
+    private const int FrameWidth = 1360;
     private const int FrameHeight = 768;
     private const int FrameStride = FrameWidth * 4;
     private const int FrameBytes = FrameStride * FrameHeight;
     private const int SharedFrameOffset = 24;
-    private const int SharedSize = SharedFrameOffset + FrameBytes;
+    private const int CmdOffset = SharedFrameOffset + FrameBytes;
+    private const int CmdHaveOffset = CmdOffset + 4;
+    private const int CmdPathOffset = CmdOffset + 8;
+    private const int CmdPathBytes = 1024;
+    private const int SharedSize = CmdPathOffset + CmdPathBytes;
     private const int StopOffset = 4;
 
     private readonly string m_baseDir;
@@ -47,8 +51,20 @@ public sealed class VmManager
         m_sshKeyPath = PrepareSshKey();
 
         m_records = LoadRecords();
+        var agentRecordsChanged = false;
         foreach (var record in m_records)
+        {
             m_runtimes[record.Id] = new VmRuntime(record);
+            if (!string.Equals(record.Kind, "agent", StringComparison.OrdinalIgnoreCase) ||
+                (record.RamMb == 512 && record.DiskGb == 40 && record.Size == "s"))
+                continue;
+            record.RamMb = 512;
+            record.DiskGb = 40;
+            record.Size = "s";
+            agentRecordsChanged = true;
+        }
+        if (agentRecordsChanged)
+            SaveRecordsLocked();
 
         _ = Task.Run(StatsLoopAsync);
     }
@@ -70,12 +86,7 @@ public sealed class VmManager
     public VmDto Create(string name, string size)
     {
         size = size.ToLowerInvariant();
-        var (ram, disk) = size switch
-        {
-            "s" => (512, 40),
-            "l" => (2048, 160),
-            _ => (1024, 80)
-        };
+        var (ram, disk) = SizeSpec(size);
 
         lock (m_lock)
         {
@@ -104,6 +115,413 @@ public sealed class VmManager
         }
     }
 
+    private static (int RamMb, int DiskGb) SizeSpec(string size) => size switch
+    {
+        "s" or "tiny" => (512, 40),
+        "nano" => (2048, 80),
+        "standard" => (4096, 80),
+        "l" => (2048, 160),
+        "pro" => (8192, 160),
+        "wide" => (16384, 160),
+        _ => (1024, 80)
+    };
+
+    public VmDto CreateAgent(string name)
+    {
+        lock (m_lock)
+        {
+            var baseName = name.Length > 40 ? name[..40] : name;
+            var unique = baseName;
+            for (var i = 2; m_records.Any(r => r.Name.Equals(unique, StringComparison.OrdinalIgnoreCase)); i++)
+                unique = $"{baseName} {i}";
+
+            var record = new VmRecord
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Name = unique,
+                RamMb = 512,
+                Cpu = 1,
+                DiskGb = 40,
+                Size = "s",
+                Os = "Soil Agent",
+                Kind = "agent",
+                AgentStatus = "queued",
+                CreatedUtc = DateTime.UtcNow
+            };
+            m_paths.EnsureMachine(record.Id);
+            WriteMachineRecordLocked(record);
+            m_records.Add(record);
+            m_runtimes[record.Id] = new VmRuntime(record);
+            SaveRecordsLocked();
+            return BundleLocked(record);
+        }
+    }
+
+    public VmDto CreateApp(
+        string name, string size, string repoUrl, string owner, string repo, string? reference)
+    {
+        size = size.ToLowerInvariant();
+        var (ram, disk) = SizeSpec(size);
+
+        lock (m_lock)
+        {
+            var baseName = name.Length > 40 ? name[..40] : name;
+            var unique = baseName;
+            for (var i = 2; m_records.Any(r => r.Name.Equals(unique, StringComparison.OrdinalIgnoreCase)); i++)
+                unique = $"{baseName} {i}";
+
+            var record = new VmRecord
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Name = unique,
+                RamMb = ram,
+                Cpu = 1,
+                DiskGb = disk,
+                Size = size,
+                Os = "Soil App",
+                Kind = "app",
+                RepoUrl = repoUrl,
+                RepoOwner = owner,
+                RepoName = repo,
+                RepoRef = reference,
+                AppStatus = "queued",
+                CreatedUtc = DateTime.UtcNow
+            };
+            m_paths.EnsureMachine(record.Id);
+            WriteMachineRecordLocked(record);
+            m_records.Add(record);
+            m_runtimes[record.Id] = new VmRuntime(record);
+            SaveRecordsLocked();
+            return BundleLocked(record);
+        }
+    }
+
+    public VmDto? Get(string id)
+    {
+        lock (m_lock)
+        {
+            SyncProcessStatesLocked();
+            var record = m_records.FirstOrDefault(r => r.Id == id);
+            return record is null ? null : BundleLocked(record);
+        }
+    }
+
+    internal VmRecord? FindRecord(string id)
+    {
+        lock (m_lock)
+            return m_records.FirstOrDefault(r => r.Id == id);
+    }
+
+    public void UpdateAppState(
+        string id, string status, string? error, string? hostUrl, string? guestUrl, string? log)
+    {
+        lock (m_lock)
+        {
+            var record = m_records.FirstOrDefault(r => r.Id == id);
+            if (record is null)
+                return;
+            record.AppStatus = status;
+            record.AppError = error;
+            record.AppHostUrl = hostUrl;
+            record.AppGuestUrl = guestUrl;
+            record.AppLog = log;
+            WriteMachineRecordLocked(record);
+            SaveRecordsLocked();
+        }
+    }
+
+    public void UpdateAgentState(
+        string id,
+        string status,
+        string? error,
+        string? log,
+        string? claudeVersion,
+        string? codexVersion)
+    {
+        lock (m_lock)
+        {
+            var record = m_records.FirstOrDefault(r => r.Id == id);
+            if (record is null)
+                return;
+            record.AgentStatus = status;
+            record.AgentError = error;
+            record.AgentLog = log;
+            record.AgentClaudeVersion = claudeVersion;
+            record.AgentCodexVersion = codexVersion;
+            WriteMachineRecordLocked(record);
+            SaveRecordsLocked();
+        }
+    }
+
+    internal (string Exe, string Key, int Port)? GetSshEndpoint(string id)
+    {
+        lock (m_lock)
+        {
+            var record = m_records.FirstOrDefault(r => r.Id == id);
+            if (record is null || !m_runtimes.TryGetValue(id, out var runtime))
+                return null;
+            if (runtime.Status != "running" || runtime.SshPort <= 0)
+                return null;
+            if (string.IsNullOrWhiteSpace(m_sshKeyPath) || !File.Exists(m_sshKeyPath))
+                return null;
+            return (m_sshExe, m_sshKeyPath, runtime.SshPort);
+        }
+    }
+
+    public async Task OpenGuestUrlAsync(string id, string url, CancellationToken ct)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
+            uri.Scheme != Uri.UriSchemeHttp ||
+            !uri.Host.Equals("10.0.2.2", StringComparison.Ordinal))
+            throw new ArgumentException("Invalid guest app URL.", nameof(url));
+
+        var script = "i=0; while [ $i -lt 60 ]; do DISPLAY=:0 xset q >/dev/null 2>&1 && break; " +
+                     "sleep 1; i=$((i+1)); done; DISPLAY=:0 soil-browser " +
+                     ShellQuote(url);
+        var remote = "nohup sh -c " + ShellQuote(script) +
+                     " >/tmp/soil-app-browser.log 2>&1 &";
+
+        for (var attempt = 0; attempt < 90; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            int port;
+            string key;
+            lock (m_lock)
+            {
+                if (m_records.FirstOrDefault(r => r.Id == id) is null)
+                    return;
+                if (!m_runtimes.TryGetValue(id, out var runtime))
+                    return;
+                port = runtime.SshPort;
+                key = m_sshKeyPath;
+            }
+            if (port > 0 && !string.IsNullOrWhiteSpace(key) && File.Exists(key))
+            {
+                try
+                {
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = m_sshExe,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+                    psi.ArgumentList.Add("-i");
+                    psi.ArgumentList.Add(key);
+                    psi.ArgumentList.Add("-p");
+                    psi.ArgumentList.Add(port.ToString(CultureInfo.InvariantCulture));
+                    psi.ArgumentList.Add("-o");
+                    psi.ArgumentList.Add("StrictHostKeyChecking=no");
+                    psi.ArgumentList.Add("-o");
+                    psi.ArgumentList.Add("UserKnownHostsFile=NUL");
+                    psi.ArgumentList.Add("-o");
+                    psi.ArgumentList.Add("BatchMode=yes");
+                    psi.ArgumentList.Add("-o");
+                    psi.ArgumentList.Add("ConnectTimeout=5");
+                    psi.ArgumentList.Add("-o");
+                    psi.ArgumentList.Add("LogLevel=ERROR");
+                    psi.ArgumentList.Add("tc@127.0.0.1");
+                    psi.ArgumentList.Add(remote);
+
+                    using var ssh = new Process { StartInfo = psi };
+                    ssh.Start();
+                    using var wait = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    wait.CancelAfter(TimeSpan.FromSeconds(20));
+                    await ssh.WaitForExitAsync(wait.Token);
+                    if (ssh.ExitCode == 0)
+                        return;
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                catch
+                {
+                }
+            }
+            await Task.Delay(1000, ct);
+        }
+        throw new InvalidOperationException("Could not open the app in the machine.");
+    }
+
+    public async Task OpenGuestSolAsync(
+        string id, string solPath, string appId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(solPath) || !File.Exists(solPath))
+            throw new ArgumentException("Invalid app package.", nameof(solPath));
+        if (string.IsNullOrWhiteSpace(appId))
+            throw new ArgumentException("Invalid app ID.", nameof(appId));
+
+        var remote = "/tmp/soil-app-" +
+                     id.Replace("-", "", StringComparison.Ordinal) + ".sol";
+        var launch = "i=0; while [ $i -lt 60 ]; do " +
+                     "DISPLAY=:0 xset q >/dev/null 2>&1 && break; sleep 1; i=$((i+1)); done; " +
+                     "DISPLAY=:0 soil launch " + ShellQuote(appId);
+        var install = "DISPLAY=:0 soil install " + ShellQuote(remote) +
+                      " >/tmp/soil-app-sol.log 2>&1; rc=$?; " +
+                      "if [ $rc -ne 0 ]; then exit $rc; fi; " +
+                      "nohup sh -c " + ShellQuote(launch) +
+                      " >>/tmp/soil-app-sol.log 2>&1 &";
+
+        for (var attempt = 0; attempt < 90; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            int port;
+            string key;
+            lock (m_lock)
+            {
+                if (m_records.FirstOrDefault(r => r.Id == id) is null)
+                    return;
+                if (!m_runtimes.TryGetValue(id, out var runtime))
+                    return;
+                port = runtime.SshPort;
+                key = m_sshKeyPath;
+            }
+
+            if (port > 0 && !string.IsNullOrWhiteSpace(key) && File.Exists(key))
+            {
+                try
+                {
+                    if (await CopyGuestFileAsync(port, key, solPath, remote, ct) &&
+                        await RunGuestCommandAsync(
+                            port, key, "command -v soil >/dev/null 2>&1", 10, ct) &&
+                        await RunGuestCommandAsync(port, key, install, 120, ct))
+                        return;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch
+                {
+                }
+            }
+            await Task.Delay(1000, ct);
+        }
+        throw new InvalidOperationException(
+            "Could not install and launch the app package in the machine.");
+    }
+
+    private async Task<bool> CopyGuestFileAsync(
+        int port,
+        string key,
+        string local,
+        string remote,
+        CancellationToken ct)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = m_sshExe,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        psi.ArgumentList.Add("-i");
+        psi.ArgumentList.Add(key);
+        psi.ArgumentList.Add("-p");
+        psi.ArgumentList.Add(port.ToString(CultureInfo.InvariantCulture));
+        psi.ArgumentList.Add("-o");
+        psi.ArgumentList.Add("StrictHostKeyChecking=no");
+        psi.ArgumentList.Add("-o");
+        psi.ArgumentList.Add("UserKnownHostsFile=NUL");
+        psi.ArgumentList.Add("-o");
+        psi.ArgumentList.Add("BatchMode=yes");
+        psi.ArgumentList.Add("-o");
+        psi.ArgumentList.Add("ConnectTimeout=10");
+        psi.ArgumentList.Add("-o");
+        psi.ArgumentList.Add("LogLevel=ERROR");
+        psi.ArgumentList.Add("tc@127.0.0.1");
+        psi.ArgumentList.Add("cat > " + ShellQuote(remote));
+
+        using var ssh = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        ssh.OutputDataReceived += (_, _) => { };
+        ssh.ErrorDataReceived += (_, _) => { };
+        ssh.Start();
+        ssh.BeginOutputReadLine();
+        ssh.BeginErrorReadLine();
+
+        using var wait = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        wait.CancelAfter(TimeSpan.FromMinutes(3));
+        try
+        {
+            await using (var input = File.OpenRead(local))
+                await input.CopyToAsync(ssh.StandardInput.BaseStream, wait.Token);
+            ssh.StandardInput.Close();
+            await ssh.WaitForExitAsync(wait.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            KillQuietly(ssh);
+            if (ct.IsCancellationRequested)
+                throw;
+            return false;
+        }
+        catch
+        {
+            KillQuietly(ssh);
+            return false;
+        }
+        return ssh.ExitCode == 0;
+    }
+
+    private async Task<bool> RunGuestCommandAsync(
+        int port,
+        string key,
+        string remote,
+        int timeoutSeconds,
+        CancellationToken ct)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = m_sshExe,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        psi.ArgumentList.Add("-i");
+        psi.ArgumentList.Add(key);
+        psi.ArgumentList.Add("-p");
+        psi.ArgumentList.Add(port.ToString(CultureInfo.InvariantCulture));
+        psi.ArgumentList.Add("-o");
+        psi.ArgumentList.Add("StrictHostKeyChecking=no");
+        psi.ArgumentList.Add("-o");
+        psi.ArgumentList.Add("UserKnownHostsFile=NUL");
+        psi.ArgumentList.Add("-o");
+        psi.ArgumentList.Add("BatchMode=yes");
+        psi.ArgumentList.Add("-o");
+        psi.ArgumentList.Add("ConnectTimeout=5");
+        psi.ArgumentList.Add("-o");
+        psi.ArgumentList.Add("LogLevel=ERROR");
+        psi.ArgumentList.Add("tc@127.0.0.1");
+        psi.ArgumentList.Add(remote);
+
+        using var ssh = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        ssh.OutputDataReceived += (_, _) => { };
+        ssh.ErrorDataReceived += (_, _) => { };
+        ssh.Start();
+        ssh.BeginOutputReadLine();
+        ssh.BeginErrorReadLine();
+
+        using var wait = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        wait.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+        try
+        {
+            await ssh.WaitForExitAsync(wait.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            KillQuietly(ssh);
+            if (ct.IsCancellationRequested)
+                throw;
+            return false;
+        }
+        return ssh.ExitCode == 0;
+    }
+
+    private static string ShellQuote(string value) =>
+        "'" + value.Replace("'", "'\\''") + "'";
+
     public VmDto? Start(string id)
     {
         VmRuntime runtime;
@@ -115,6 +533,7 @@ public sealed class VmManager
             runtime = m_runtimes[record.Id];
             if (runtime.Deleting)
                 return null;
+            runtime.ParkPending = false;
             if (runtime.Proc is { HasExited: false } || runtime.Status == "starting")
                 return BundleLocked(record);
             runtime.StartCts?.Cancel();
@@ -153,6 +572,7 @@ public sealed class VmManager
             runtime = m_runtimes[record.Id];
             if (runtime.Deleting)
                 return null;
+            runtime.ParkPending = false;
             runtime.StartCts?.Cancel();
             runtime.StatsCts?.Cancel();
             var proc = runtime.Proc;
@@ -313,6 +733,25 @@ public sealed class VmManager
         {
         }
 
+        var syncs = new List<Task>();
+        foreach (var runtime in live)
+        {
+            var port = runtime.SshPort;
+            if (port > 0 && File.Exists(m_sshKeyPath))
+                syncs.Add(RunGuestCommandAsync(
+                    port, m_sshKeyPath, "sync", 2, CancellationToken.None));
+        }
+        if (syncs.Count > 0)
+        {
+            try
+            {
+                Task.WaitAll(syncs.ToArray(), 2500);
+            }
+            catch
+            {
+            }
+        }
+
         foreach (var runtime in live)
         {
             try
@@ -341,6 +780,40 @@ public sealed class VmManager
             foreach (var runtime in m_runtimes.Values)
                 CleanupLocked(runtime);
         }
+    }
+
+    public void IdleAll()
+    {
+        lock (m_lock)
+        {
+            foreach (var runtime in m_runtimes.Values)
+            {
+                if (runtime.Deleting || runtime.ParkPending || runtime.Status != "running")
+                    continue;
+                var proc = runtime.Proc;
+                if (proc is null || proc.HasExited)
+                    continue;
+                runtime.ParkPending = true;
+                runtime.StartCts?.Cancel();
+                runtime.StatsCts?.Cancel();
+                runtime.Status = "stopping";
+                _ = Task.Run(() => StopAsync(runtime, proc));
+            }
+        }
+    }
+
+    public void ResumeAll()
+    {
+        List<string> ids;
+        lock (m_lock)
+        {
+            ids = m_runtimes.Values
+                .Where(runtime => !runtime.Deleting && runtime.Status == "idle")
+                .Select(runtime => runtime.Record.Id)
+                .ToList();
+        }
+        foreach (var id in ids)
+            _ = Start(id);
     }
 
     internal VmRuntime? FindRuntime(string id)
@@ -495,6 +968,11 @@ public sealed class VmManager
             psi.ArgumentList.Add(Path.Combine(m_imagesDir, "core2.gz"));
             psi.ArgumentList.Add("--disk");
             psi.ArgumentList.Add(Path.Combine(m_imagesDir, "soil.squashfs"));
+            var dataGb = runtime.Record.DiskGb > 0 ? runtime.Record.DiskGb : 40;
+            psi.ArgumentList.Add("--data-disk");
+            psi.ArgumentList.Add(m_paths.MachineDiskPath(runtime.Record.Id));
+            psi.ArgumentList.Add("--data-gb");
+            psi.ArgumentList.Add(dataGb.ToString(CultureInfo.InvariantCulture));
             psi.ArgumentList.Add("--ram");
             psi.ArgumentList.Add(runtime.Record.RamMb.ToString());
             Directory.CreateDirectory(m_paths.MachineLogDir(runtime.Record.Id));
@@ -504,17 +982,35 @@ public sealed class VmManager
             psi.ArgumentList.Add(m_paths.MachineLogPath(runtime.Record.Id));
             psi.ArgumentList.Add("--no-ui");
             var sshPort = 0;
+            var mcpPort = 0;
             if (!string.IsNullOrEmpty(m_sshKeyPath) && File.Exists(m_sshKeyPath))
             {
                 sshPort = AllocateLoopbackPort();
+                mcpPort = AllocateLoopbackPort();
                 psi.ArgumentList.Add("--ssh-port");
                 psi.ArgumentList.Add(sshPort.ToString(CultureInfo.InvariantCulture));
                 psi.ArgumentList.Add("--mcp-port");
-                psi.ArgumentList.Add("0");
+                psi.ArgumentList.Add(mcpPort.ToString(CultureInfo.InvariantCulture));
             }
             else
             {
                 psi.ArgumentList.Add("--no-hostfwd");
+            }
+            var snapPath = Path.Combine(m_paths.MachineDir(runtime.Record.Id), "boot.snap");
+            var restoreBoot = false;
+            try
+            {
+                restoreBoot = File.Exists(snapPath) && new FileInfo(snapPath).Length > 0;
+            }
+            catch (IOException)
+            {
+            }
+            psi.ArgumentList.Add("--snapshot-out");
+            psi.ArgumentList.Add(snapPath);
+            if (restoreBoot)
+            {
+                psi.ArgumentList.Add("--restore");
+                psi.ArgumentList.Add(snapPath);
             }
             psi.ArgumentList.Add("--ipc");
             psi.ArgumentList.Add(token);
@@ -538,6 +1034,7 @@ public sealed class VmManager
                     runtime.Proc = proc;
                     runtime.Token = token;
                     runtime.SshPort = sshPort;
+                    runtime.McpPort = mcpPort;
                 }
             }
             if (canceled)
@@ -597,16 +1094,7 @@ public sealed class VmManager
             view = null;
             pipe = null;
 
-            var boot = Stopwatch.StartNew();
-            while (boot.Elapsed < TimeSpan.FromSeconds(90))
-            {
-                ct.ThrowIfCancellationRequested();
-                if (proc.HasExited)
-                    break;
-                if (HasVisibleContent(bootView) || boot.Elapsed > TimeSpan.FromSeconds(20))
-                    break;
-                await Task.Delay(400, ct);
-            }
+            await EnsureGuestGuiReadyAsync(runtime, bootView, proc, ct);
 
             ct.ThrowIfCancellationRequested();
             var running = false;
@@ -643,6 +1131,8 @@ public sealed class VmManager
 
             StartGuestStats(runtime);
             _ = Task.Run(() => MonitorExitAsync(runtime, proc));
+            if (!restoreBoot)
+                _ = Task.Run(() => KickFirstBootSnapshotAsync(runtime, snapPath, proc));
         }
         catch (OperationCanceledException)
         {
@@ -710,7 +1200,7 @@ public sealed class VmManager
         {
             if (ReferenceEquals(runtime.Proc, proc))
             {
-                runtime.Status = "stopped";
+                runtime.Status = ConsumeParkLocked(runtime);
                 runtime.StartedUtc = null;
                 runtime.History.Clear();
                 CleanupLocked(runtime);
@@ -718,8 +1208,27 @@ public sealed class VmManager
         }
     }
 
+    private static string ConsumeParkLocked(VmRuntime runtime)
+    {
+        if (!runtime.ParkPending)
+            return "stopped";
+        runtime.ParkPending = false;
+        return "idle";
+    }
+
     private async Task StopAsync(VmRuntime runtime, Process proc)
     {
+        try
+        {
+            var port = runtime.SshPort;
+            if (port > 0 && File.Exists(m_sshKeyPath))
+                await RunGuestCommandAsync(
+                    port, m_sshKeyPath, "sync", 2, CancellationToken.None);
+        }
+        catch
+        {
+        }
+
         try
         {
             lock (m_lock)
@@ -734,7 +1243,7 @@ public sealed class VmManager
 
         try
         {
-            if (!await WaitForExitAsync(proc, TimeSpan.FromSeconds(5)))
+            if (!await WaitForExitAsync(proc, TimeSpan.FromSeconds(20)))
                 proc.Kill(true);
         }
         catch
@@ -745,7 +1254,7 @@ public sealed class VmManager
         {
             if (ReferenceEquals(runtime.Proc, proc))
             {
-                runtime.Status = "stopped";
+                runtime.Status = ConsumeParkLocked(runtime);
                 runtime.StartedUtc = null;
                 runtime.History.Clear();
                 CleanupLocked(runtime);
@@ -796,7 +1305,7 @@ public sealed class VmManager
         var runtime = m_runtimes[record.Id];
         if (runtime.Proc is { HasExited: true })
         {
-            runtime.Status = "stopped";
+            runtime.Status = ConsumeParkLocked(runtime);
             runtime.StartedUtc = null;
         }
 
@@ -804,11 +1313,43 @@ public sealed class VmManager
             (long)Math.Max(0, (DateTime.UtcNow - runtime.StartedUtc.Value).TotalSeconds);
         var series = runtime.History.ToList();
 
+        var app = string.Equals(record.Kind, "app", StringComparison.OrdinalIgnoreCase)
+            ? new AppDto(
+                record.RepoUrl, record.AppStatus ?? "queued", record.AppError,
+                record.AppHostUrl, record.AppGuestUrl, record.AppLog)
+            : null;
+
+        TunnelDto? tunnel = null;
+        if (string.Equals(record.Kind, "agent", StringComparison.OrdinalIgnoreCase) &&
+            runtime.Status == "running" && runtime.SshPort > 0 && runtime.McpPort > 0 &&
+            !string.IsNullOrWhiteSpace(m_sshKeyPath) && File.Exists(m_sshKeyPath))
+        {
+            var command = "ssh -i " + QuoteArgument(m_sshKeyPath) +
+                          " -p " + runtime.SshPort.ToString(CultureInfo.InvariantCulture) +
+                          " -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL tc@127.0.0.1";
+            var mcpCommand = "ssh -i " + QuoteArgument(m_sshKeyPath) +
+                             " -p " + runtime.McpPort.ToString(CultureInfo.InvariantCulture) +
+                             " -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL tc@127.0.0.1";
+            tunnel = new TunnelDto(
+                "127.0.0.1", runtime.SshPort, runtime.McpPort, "tc", m_sshKeyPath,
+                command, mcpCommand);
+        }
+
+        var agent = string.Equals(record.Kind, "agent", StringComparison.OrdinalIgnoreCase)
+            ? new AgentDto(
+                record.AgentStatus ?? "queued", record.AgentError, record.AgentLog,
+                record.AgentClaudeVersion, record.AgentCodexVersion, tunnel)
+            : null;
+
         return new VmDto(
             record.Id, record.Name, runtime.Status, record.RamMb, record.Cpu,
             record.DiskGb, record.Os, uptime, runtime.Error,
-            series.Select(p => new StatDto(p.CpuPercent, p.MemMb, p.InMbps, p.OutMbps)).ToList());
+            series.Select(p => new StatDto(p.CpuPercent, p.MemMb, p.InMbps, p.OutMbps)).ToList(),
+            app, record.Kind, agent);
     }
+
+    private static string QuoteArgument(string value) =>
+        "\"" + value.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
 
     private void SyncProcessStatesLocked()
     {
@@ -816,7 +1357,7 @@ public sealed class VmManager
         {
             if (runtime.Proc is { HasExited: true } && runtime.Status != "stopped")
             {
-                runtime.Status = "stopped";
+                runtime.Status = ConsumeParkLocked(runtime);
                 runtime.StartedUtc = null;
                 runtime.History.Clear();
                 CleanupLocked(runtime);
@@ -850,6 +1391,7 @@ public sealed class VmManager
         runtime.StatsCts = null;
         runtime.StatsTask = null;
         runtime.SshPort = 0;
+        runtime.McpPort = 0;
         runtime.GuestSampleUtc = default;
         runtime.GuestMemMb = 0;
         runtime.GuestCpuPct = 0;
@@ -911,6 +1453,54 @@ public sealed class VmManager
         runtime.Proc = null;
         runtime.StartCts = null;
         runtime.LaunchTask = null;
+    }
+
+    private async Task EnsureGuestGuiReadyAsync(
+        VmRuntime runtime,
+        MemoryMappedViewAccessor bootView,
+        Process proc,
+        CancellationToken ct)
+    {
+        int port;
+        string key;
+        lock (m_lock)
+        {
+            port = runtime.SshPort;
+            key = m_sshKeyPath;
+        }
+
+        if (port <= 0 || string.IsNullOrWhiteSpace(key) || !File.Exists(key))
+        {
+            var boot = Stopwatch.StartNew();
+            while (boot.Elapsed < TimeSpan.FromSeconds(90))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (proc.HasExited || HasVisibleContent(bootView))
+                    break;
+                await Task.Delay(400, ct);
+            }
+            await Task.Delay(TimeSpan.FromSeconds(25), ct);
+            return;
+        }
+
+        const string probe =
+            "DISPLAY=:0 xset q >/dev/null 2>&1 && " +
+            "ps w | grep -q '[p]cmanfm' && ps w | grep -q '[f]luxbox'";
+        var ready = Stopwatch.StartNew();
+        while (ready.Elapsed < TimeSpan.FromSeconds(150))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (proc.HasExited)
+                return;
+            if (await RunGuestCommandAsync(port, key, probe, 8, ct))
+            {
+                await Task.Delay(700, ct);
+                if (await RunGuestCommandAsync(port, key, probe, 8, ct))
+                    return;
+            }
+            await Task.Delay(1000, ct);
+        }
+        throw new TimeoutException("The desktop did not finish starting.");
     }
 
     private static bool HasVisibleContent(MemoryMappedViewAccessor view)
@@ -1086,9 +1676,11 @@ public sealed class VmManager
         }
     }
 
-    private static string FindSshExecutable()
+    private static string FindSshExecutable() => FindExecutable("ssh.exe");
+
+    private static string FindExecutable(string name)
     {
-        var bundled = Path.Combine(Environment.SystemDirectory, "OpenSSH", "ssh.exe");
+        var bundled = Path.Combine(Environment.SystemDirectory, "OpenSSH", name);
         if (File.Exists(bundled))
             return bundled;
         foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "")
@@ -1096,7 +1688,7 @@ public sealed class VmManager
         {
             try
             {
-                var candidate = Path.Combine(dir.Trim(), "ssh.exe");
+                var candidate = Path.Combine(dir.Trim(), name);
                 if (File.Exists(candidate))
                     return candidate;
             }
@@ -1104,7 +1696,7 @@ public sealed class VmManager
             {
             }
         }
-        return "ssh.exe";
+        return name;
     }
 
     private string PrepareSshKey()
@@ -1161,6 +1753,40 @@ public sealed class VmManager
             psi.ArgumentList.Add(user + ":F");
             using var proc = Process.Start(psi);
             proc?.WaitForExit(3000);
+        }
+        catch
+        {
+        }
+    }
+
+    private async Task KickFirstBootSnapshotAsync(VmRuntime runtime, string snapPath, Process proc)
+    {
+        try
+        {
+            for (var i = 0; i < 25 && !proc.HasExited; i++)
+                await Task.Delay(200);
+            if (proc.HasExited || File.Exists(snapPath) || runtime.View is null)
+                return;
+            var view = runtime.View;
+            var path = System.Text.Encoding.ASCII.GetBytes(snapPath);
+            if (path.Length == 0 || path.Length >= CmdPathBytes)
+                return;
+            var buffer = new byte[path.Length + 1];
+            path.CopyTo(buffer, 0);
+            view.WriteArray(CmdPathOffset, buffer, 0, buffer.Length);
+            view.Write(CmdHaveOffset, path.Length);
+            view.Write(CmdOffset, 1);
+            for (var i = 0; i < 60; i++)
+            {
+                await Task.Delay(250);
+                if (proc.HasExited)
+                    return;
+                if (view.ReadInt32(CmdOffset) == 2)
+                {
+                    view.Write(CmdOffset, 0);
+                    return;
+                }
+            }
         }
         catch
         {
@@ -1488,10 +2114,50 @@ internal sealed class VmRecord
     public int DiskGb { get; set; }
     public string Size { get; set; } = "m";
     public string Os { get; set; } = "Soil Desktop";
+    public string Kind { get; set; } = "desktop";
+    public string? RepoUrl { get; set; }
+    public string? RepoOwner { get; set; }
+    public string? RepoName { get; set; }
+    public string? RepoRef { get; set; }
+    public string? AppStatus { get; set; }
+    public string? AppError { get; set; }
+    public string? AppHostUrl { get; set; }
+    public string? AppGuestUrl { get; set; }
+    public string? AppLog { get; set; }
+    public string? AgentStatus { get; set; }
+    public string? AgentError { get; set; }
+    public string? AgentLog { get; set; }
+    public string? AgentClaudeVersion { get; set; }
+    public string? AgentCodexVersion { get; set; }
     public DateTime CreatedUtc { get; set; }
 }
 
 public sealed record StatDto(double Cpu, double Mem, double In, double Out);
+
+public sealed record AppDto(
+    string? RepoUrl,
+    string Status,
+    string? Error,
+    string? HostUrl,
+    string? GuestUrl,
+    string? Log);
+
+public sealed record TunnelDto(
+    string Host,
+    int Port,
+    int McpPort,
+    string User,
+    string KeyPath,
+    string Command,
+    string McpCommand);
+
+public sealed record AgentDto(
+    string Status,
+    string? Error,
+    string? Log,
+    string? ClaudeVersion,
+    string? CodexVersion,
+    TunnelDto? Tunnel);
 
 public sealed record VmDto(
     string Id,
@@ -1503,7 +2169,10 @@ public sealed record VmDto(
     string Os,
     long UptimeSec,
     string? Error,
-    List<StatDto> Series);
+    List<StatDto> Series,
+    AppDto? App,
+    string Kind,
+    AgentDto? Agent);
 
 internal sealed class VmRuntime
 {
@@ -1521,11 +2190,13 @@ internal sealed class VmRuntime
     internal CancellationTokenSource? StartCts;
     internal Task? LaunchTask;
     internal int StartGeneration;
+    internal bool ParkPending;
     internal string Status = "stopped";
     internal bool Deleting;
     internal string? Error;
     internal DateTime? StartedUtc;
     internal int SshPort;
+    internal int McpPort;
     internal CancellationTokenSource? StatsCts;
     internal Task? StatsTask;
     internal Process? StatsProcess;
@@ -1630,7 +2301,7 @@ internal sealed class VmRuntime
         return stream.ToArray();
     }
 
-    private const int FrameWidthInternal = 1024;
+    private const int FrameWidthInternal = 1360;
     private const int FrameHeightInternal = 768;
     private const int FrameBytes = FrameWidthInternal * 4 * FrameHeightInternal;
     private const int SharedFrameOffset = 24;

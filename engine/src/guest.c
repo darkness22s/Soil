@@ -254,7 +254,7 @@ int VhGuestLoad(VH_VM *pVm, const char *pszKernel, const char *pszInitrd, const 
         w16(pbSi, SI_LFB_HEIGHT, VH_FB_H);
         w16(pbSi, SI_LFB_DEPTH, VH_FB_BPP);
         w32(pbSi, SI_LFB_BASE, (u32)pVm->mem.gpaFb);
-        w32(pbSi, SI_LFB_SIZE, (u32)(VH_FB_SIZE >> 16));      /* 64 KiB units */
+        w32(pbSi, SI_LFB_SIZE, (u32)((VH_FB_SIZE + 0xFFFF) >> 16)); /* 64 KiB units */
         w16(pbSi, SI_LFB_LINELENGTH, VH_FB_STRIDE);
         w8(pbSi, SI_RED_SIZE, 8);   w8(pbSi, SI_RED_POS, 16); /* X8R8G8B8 */
         w8(pbSi, SI_GREEN_SIZE, 8); w8(pbSi, SI_GREEN_POS, 8);

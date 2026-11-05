@@ -102,6 +102,22 @@ static NE2000State s_ne2k;
 static VH_VM *s_pVmNic;
 static const u8 s_abMac[6] = { 0x52, 0x54, 0x00, 0x12, 0x34, 0x56 };
 
+int Ne2000SaveState(const u8 **ppb)
+{
+    *ppb = (const u8 *)&s_ne2k;
+    return (int)sizeof(s_ne2k);
+}
+
+void Ne2000LoadState(const u8 *pb)
+{
+    memcpy(&s_ne2k, pb, sizeof(s_ne2k));
+}
+
+void Ne2000BindVm(VH_VM *pVm)
+{
+    s_pVmNic = pVm;
+}
+
 static void ne2000_update_irq(NE2000State *s)
 {
     int isr = (s->isr & s->imr) & 0x7f;

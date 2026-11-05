@@ -8,10 +8,25 @@
   const list = $('#list');
   const screen = $('#screen');
   const image = $('#vmscreen');
-  const unavail = $('#unavail');
+  const unavailText = $('#unavail-text');
+  const appFailure = $('#app-failure');
+  const appErrorLog = $('#app-error-log');
   const hint = $('#hint');
   const charts = $('#charts');
   const themeSw = $('#theme');
+  const dlgApp = $('#dlg-app');
+  const dlgAgent = $('#dlg-agent');
+  const agentPanel = $('#agent');
+  const agentState = $('#agent-state');
+  const agentCommand = $('#agent-command');
+  const agentLog = $('#agent-log');
+  const agentCopy = $('#agent-copy');
+  const agentTerminal = $('#agent-terminal');
+  const appRepo = $('#app-repo');
+  const appNote = $('#app-note');
+  const ghLogin = $('#gh-login');
+  const ghState = $('#gh-state');
+  const ghConnect = $('#gh-connect');
   const tabMachines = $('#tab-machines');
   const tabFiles = $('#tab-files');
   const machineNav = $('#machine-nav');
@@ -30,7 +45,26 @@
   const previewImage = $('#preview-image');
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  const LABEL = { running: 'Running', stopped: 'Stopped', starting: 'Starting', stopping: 'Stopping' };
+  const LABEL = { running: 'Running', stopped: 'Stopped', starting: 'Starting', stopping: 'Stopping', idle: 'Idle' };
+  const APP_LABEL = {
+    queued: 'Queued',
+    fetching: 'Downloading',
+    detecting: 'Inspecting',
+    installing: 'Installing',
+    packaging: 'Packaging',
+    starting: 'Starting',
+    ready: 'Ready',
+    failed: 'Setup failed',
+    stopped: 'Stopped'
+  };
+  const AGENT_LABEL = {
+    queued: 'Queued',
+    starting: 'Starting tunnel',
+    preparing: 'Preparing tools',
+    ready: 'Tools ready',
+    failed: 'Setup failed',
+    stopped: 'Stopped'
+  };
   const state = {
     vms: [],
     selected: null,
@@ -45,7 +79,10 @@
     filePath: '',
     fileParent: null,
     fileEntries: [],
-    selectedFile: null
+    selectedFile: null,
+    ghStatus: null,
+    ghPoll: 0,
+    ghRepos: []
   };
   const cards = {};
   let pendingDeleteId = null;
@@ -193,6 +230,38 @@
     }
   }
 
+  function renderAgent(vm) {
+    const isAgent = vm && vm.kind === 'agent';
+    if (state.view !== 'machines' || !isAgent) {
+      agentPanel.hidden = true;
+      return;
+    }
+    agentPanel.hidden = false;
+    const agent = vm.agent || {};
+    const tunnel = agent.tunnel || null;
+    const label = AGENT_LABEL[agent.status] || agent.status || 'Preparing';
+    if (vm.status === 'stopped') {
+      agentState.textContent = 'Stopped. Start the machine to reload the tools and tunnel.';
+    } else if (vm.status === 'starting') {
+      agentState.textContent = 'Booting the machine...';
+    } else if (agent.status === 'failed') {
+      agentState.textContent = agent.error || 'Agent setup failed.';
+    } else if (agent.status === 'ready') {
+      const claude = agent.claudeVersion ? 'Claude Code ' + agent.claudeVersion : 'Claude Code';
+      const codex = agent.codexVersion ? 'Codex ' + agent.codexVersion : 'Codex';
+      agentState.textContent = claude + ' and ' + codex + ' are ready.';
+    } else {
+      agentState.textContent = label + '...';
+    }
+    agentCommand.textContent = tunnel
+      ? tunnel.command
+      : 'Start the machine to open the SSH tunnel.';
+    agentCopy.disabled = !tunnel;
+    agentTerminal.disabled = !tunnel || agent.status !== 'ready';
+    agentLog.textContent = agent.log || '';
+    agentLog.hidden = !agent.log || agent.status === 'ready';
+  }
+
   /* ---------------- list ---------------- */
   function paintItem(vm) {
     const el = state.elements.get(vm.id);
@@ -203,8 +272,21 @@
     el.dataset.status = vm.status;
     el.querySelector('.t').textContent = vm.name;
     let meta = `${LABEL[vm.status] || vm.status}, ${vm.cpu} CPU, ${gb(vm.ramMb)}`;
-    if (vm.status === 'running' && vm.uptimeSec > 30) meta += ' · ' + ago(vm.uptimeSec);
-    if (vm.status === 'stopped' && vm.error) meta = 'Stopped — ' + vm.error;
+    if (vm.status === 'running' && vm.uptimeSec > 30) meta += ' / ' + ago(vm.uptimeSec);
+    if (vm.status === 'idle') meta += ' / parked on disk';
+    if (vm.status === 'stopped' && vm.error) meta = 'Stopped / ' + vm.error;
+    if (vm.app) {
+      const appState = APP_LABEL[vm.app.status] || vm.app.status;
+      if (vm.app.status === 'failed') meta = 'App failed / ' + (vm.app.error || 'setup error');
+      else if (vm.app.status !== 'ready') meta = 'App / ' + appState;
+      else meta = 'App ready / ' + (LABEL[vm.status] || vm.status);
+    } else if (vm.agent) {
+      const agentState = AGENT_LABEL[vm.agent.status] || vm.agent.status;
+      if (vm.status === 'stopped') meta = 'Agent / Stopped';
+      else if (vm.agent.status === 'failed') meta = 'Agent failed / ' + (vm.agent.error || 'setup error');
+      else if (vm.agent.status !== 'ready') meta = 'Agent / ' + agentState;
+      else meta = 'Agent ready / ' + (LABEL[vm.status] || vm.status);
+    }
     el.querySelector('.mt').textContent = meta;
     const sw = el.querySelector('.sw');
     const on = vm.status === 'running' || vm.status === 'starting';
@@ -268,12 +350,13 @@
   /* ---------------- screen ---------------- */
   function contentScale() {
     const rect = screen.getBoundingClientRect();
-    const width = Math.min(rect.width, rect.height * 4 / 3);
-    return width > 0 ? width / 1024 : 0;
+    return Math.min(rect.width / 1360, rect.height / 768);
   }
 
-  function setUnavailable(text) {
-    unavail.textContent = text;
+  function setUnavailable(text, log) {
+    unavailText.textContent = text;
+    appFailure.hidden = !log;
+    appErrorLog.textContent = log || '';
   }
 
   function updateScreen(vm) {
@@ -281,6 +364,17 @@
       setUnavailable('Select a machine');
       screen.classList.remove('live', 'locked');
       stopStream();
+      return;
+    }
+
+    if (vm.app && vm.app.status === 'failed') {
+      stopStream();
+      screen.classList.remove('live', 'locked');
+      if (document.pointerLockElement === screen) document.exitPointerLock();
+      setUnavailable(
+        'App setup failed: ' + (vm.app.error || 'unknown error'),
+        vm.app.log || ''
+      );
       return;
     }
 
@@ -301,13 +395,19 @@
       stopStream();
       screen.classList.remove('live', 'locked');
       if (document.pointerLockElement === screen) document.exitPointerLock();
-      setUnavailable(
-        vm.status === 'stopping'
-          ? 'Stopping…'
-          : vm.error
-            ? vm.error
-            : 'Start this machine to see its screen'
-      );
+      if (vm.app && vm.app.status !== 'ready' && vm.app.status !== 'stopped') {
+        setUnavailable((APP_LABEL[vm.app.status] || 'Preparing') + ' app...');
+      } else {
+        setUnavailable(
+          vm.status === 'stopping'
+            ? 'Stopping...'
+            : vm.status === 'idle'
+              ? 'Idle — parked on disk; this machine uses no CPU or memory'
+              : vm.error
+                ? vm.error
+                : 'Start this machine to see its screen'
+        );
+      }
     }
   }
 
@@ -333,6 +433,7 @@
     for (const item of state.vms) paintItem(item);
     updateScreen(vm);
     drawCharts(vm);
+    renderAgent(vm);
   }
 
   /* ---------------- files ---------------- */
@@ -558,7 +659,12 @@
     screen.hidden = files;
     charts.hidden = files;
     filesView.hidden = !files;
-    if (files) loadFiles(state.filePath);
+    if (files) {
+      agentPanel.hidden = true;
+      loadFiles(state.filePath);
+    } else {
+      renderAgent(current());
+    }
   }
 
   async function openFile(path) {
@@ -574,6 +680,248 @@
       await fileJson('/api/files/reveal' + fileQuery(path), { method: 'POST' });
     } catch (error) {
       console.error(error);
+    }
+  }
+
+  /* ---------------- GitHub apps ---------------- */
+  function setGhStatus(status) {
+    state.ghStatus = status;
+    const configured = Boolean(status && status.configured);
+    const connected = Boolean(status && status.connected);
+    if (status && status.connecting) {
+      ghLogin.textContent = 'GitHub';
+      ghState.textContent = 'Waiting for GitHub...';
+      ghConnect.textContent = 'Waiting';
+      ghConnect.disabled = true;
+    } else if (connected) {
+      ghLogin.textContent = status.login || 'GitHub';
+      ghState.textContent = 'Connected';
+      ghConnect.textContent = 'Disconnect';
+      ghConnect.disabled = false;
+    } else {
+      ghLogin.textContent = 'GitHub account';
+      ghState.textContent = status && status.error
+        ? status.error
+        : configured ? 'Not connected' : 'Set the service URL in Settings';
+      ghConnect.textContent = 'Connect';
+      ghConnect.disabled = !configured;
+    }
+    appRepo.disabled = !connected;
+    if (!connected) {
+      if (appRepo.options.length === 0) {
+        const option = document.createElement('option');
+        option.value = '';
+        optionsText(option, configured);
+        appRepo.append(option);
+      } else {
+        optionsText(appRepo.options[0], configured);
+      }
+    }
+  }
+
+  function optionsText(option, configured) {
+    option.textContent = configured
+      ? 'Connect GitHub to list repositories'
+      : 'GitHub service not configured';
+  }
+
+  async function refreshGhStatus() {
+    try {
+      const status = await fileJson('/api/github/status');
+      setGhStatus(status);
+      return status;
+    } catch (error) {
+      ghState.textContent = error.message;
+      return null;
+    }
+  }
+
+  async function loadAppRepos() {
+    const status = state.ghStatus;
+    if (!status || !status.connected) return;
+    const ticket = ++state.ghPoll;
+    appRepo.disabled = true;
+    appRepo.replaceChildren();
+    const loading = document.createElement('option');
+    loading.value = '';
+    loading.textContent = 'Loading repositories...';
+    appRepo.append(loading);
+    try {
+      const data = await fileJson('/api/github/repos');
+      if (ticket !== state.ghPoll) return;
+      state.ghRepos = data.repos || [];
+      appRepo.replaceChildren();
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = state.ghRepos.length
+        ? 'Choose a repository...'
+        : 'No repositories found';
+      appRepo.append(placeholder);
+      for (const repo of state.ghRepos) {
+        const option = document.createElement('option');
+        option.value = repo.htmlUrl || ('https://github.com/' + repo.fullName);
+        option.textContent = repo.fullName + (repo.private ? ' (private)' : '');
+        option.dataset.owner = repo.owner || '';
+        option.dataset.repo = repo.name || '';
+        option.dataset.ref = repo.defaultBranch || '';
+        appRepo.append(option);
+      }
+      appRepo.disabled = false;
+    } catch (error) {
+      appRepo.replaceChildren();
+      const failed = document.createElement('option');
+      failed.value = '';
+      failed.textContent = error.message;
+      appRepo.append(failed);
+      appRepo.disabled = true;
+    }
+  }
+
+  async function waitForGitHub() {
+    const ticket = ++state.ghPoll;
+    try {
+      for (let i = 0; i < 200; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        if (ticket !== state.ghPoll) return;
+        const status = await fileJson('/api/github/status');
+        setGhStatus(status);
+        if (status.connected) {
+          await loadAppRepos();
+          return;
+        }
+        if (!status.connecting) return;
+      }
+    } catch (error) {
+      ghState.textContent = error.message;
+      ghConnect.disabled = false;
+    }
+  }
+
+  async function connectGitHub() {
+    if (state.ghStatus && state.ghStatus.connected) {
+      if (!confirm('Disconnect GitHub from Soil?')) return;
+      try {
+        const status = await fileJson('/api/github/disconnect', { method: 'POST' });
+        state.ghPoll += 1;
+        setGhStatus(status);
+        appRepo.replaceChildren();
+      } catch (error) {
+        ghState.textContent = error.message;
+      }
+      return;
+    }
+
+    ghConnect.disabled = true;
+    ghConnect.textContent = 'Opening...';
+    try {
+      const status = await fileJson('/api/github/connect', { method: 'POST' });
+      setGhStatus(status);
+      if (status.connecting) waitForGitHub();
+    } catch (error) {
+      ghState.textContent = error.message;
+      ghConnect.disabled = false;
+      ghConnect.textContent = 'Connect';
+    }
+  }
+
+  function repoNameFromUrl(value) {
+    const match = String(value || '').match(/github\.com[/:]([^/]+)\/([^/#?]+)/i) ||
+      String(value || '').match(/^([^/]+)\/([^/]+)$/);
+    if (!match) return '';
+    return match[2].replace(/\.git$/i, '');
+  }
+
+  async function openAppDialog() {
+    $('#app-form').reset();
+    $('#f-repo').value = '';
+    $('#f-app-name').value = '';
+    appNote.textContent = 'JavaScript apps need Node.js 20 or newer on this PC. Static apps work without it.';
+    $('#app-progress').hidden = true;
+    $('#app-progress-text').textContent = '';
+    $('#app-log').textContent = '';
+    $('#app-form').querySelector('button[type="submit"]').disabled = false;
+    appRepo.replaceChildren();
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'Connect GitHub to list repositories';
+    appRepo.append(option);
+    appRepo.disabled = true;
+    state.ghPoll += 1;
+    dlgApp.showModal();
+    const status = await refreshGhStatus();
+    if (status && status.connected) await loadAppRepos();
+  }
+
+  async function createApp(event) {
+    event.preventDefault();
+    const urlInput = $('#f-repo').value.trim();
+    const selected = appRepo.selectedOptions[0];
+    const selectedUrl = selected && selected.value ? selected.value : '';
+    const repoUrl = urlInput || selectedUrl;
+    if (!repoUrl) {
+      appNote.textContent = 'Choose a repository or paste a GitHub URL.';
+      return;
+    }
+
+    let owner = null;
+    let repo = null;
+    let ref = null;
+    if (!urlInput && selectedUrl) {
+      owner = selected.dataset.owner || null;
+      repo = selected.dataset.repo || null;
+      ref = selected.dataset.ref || null;
+    }
+
+    let name = $('#f-app-name').value.trim();
+    if (!name) name = repoNameFromUrl(repoUrl) || 'app';
+    const size = new FormData($('#app-form')).get('app-size') || 'm';
+    const submit = $('#app-form').querySelector('button[type="submit"]');
+    submit.disabled = true;
+    appNote.textContent = 'Creating the machine and fetching the repository...';
+    $('#app-progress').hidden = false;
+    $('#app-progress-text').textContent = 'Starting import';
+    $('#app-log').textContent = '';
+
+    try {
+      const vm = await fileJson('/api/apps', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, repoUrl, owner, repo, ref, size })
+      });
+      dlgApp.close();
+      merge(vm);
+      state.selected = vm.id;
+      renderSelected();
+      await load();
+      setTimeout(load, 1500);
+      setTimeout(load, 3500);
+    } catch (error) {
+      appNote.textContent = error.message;
+      $('#app-progress-text').textContent = 'Import failed';
+      $('#app-log').textContent = error.message;
+      submit.disabled = false;
+    }
+  }
+
+  async function saveGitHubService() {
+    const button = $('#gh-service-save');
+    const stateLabel = $('#gh-service-state');
+    button.disabled = true;
+    stateLabel.textContent = 'Saving...';
+    try {
+      const status = await fileJson('/api/github/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workerUrl: $('#gh-service').value.trim() })
+      });
+      setGhStatus(status);
+      $('#gh-service').value = status.workerUrl || '';
+      stateLabel.textContent = status.configured ? 'Saved' : 'Service URL cleared';
+      if (!status.configured) appRepo.replaceChildren();
+    } catch (error) {
+      stateLabel.textContent = error.message;
+    } finally {
+      button.disabled = false;
     }
   }
 
@@ -608,6 +956,101 @@
       renderSelected();
     } catch (error) {
       setUnavailable('The local Soil service is not responding.');
+    }
+  }
+
+  async function copyText(text) {
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch (error) {
+      }
+    }
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.append(area);
+    area.select();
+    let copied = false;
+    try {
+      copied = document.execCommand('copy');
+    } catch (error) {
+    }
+    area.remove();
+    return copied;
+  }
+
+  async function copyAppLog() {
+    const button = $('#copy-app-log');
+    const log = appErrorLog.textContent || '';
+    if (!log) return;
+    const copied = await copyText(log);
+    const previous = button.textContent;
+    button.textContent = copied ? 'Copied' : 'Copy failed';
+    setTimeout(() => { button.textContent = previous; }, 1600);
+  }
+
+  async function copyAgentCommand() {
+    const vm = current();
+    const command = vm && vm.agent && vm.agent.tunnel
+      ? vm.agent.tunnel.command
+      : '';
+    if (!command) return;
+    const copied = await copyText(command);
+    const previous = agentCopy.textContent;
+    agentCopy.textContent = copied ? 'Copied' : 'Copy failed';
+    setTimeout(() => { agentCopy.textContent = previous; }, 1600);
+  }
+
+  async function openAgentTerminal() {
+    const vm = current();
+    if (!vm) return;
+    const previous = agentTerminal.textContent;
+    agentTerminal.disabled = true;
+    agentTerminal.textContent = 'Opening...';
+    try {
+      await fileJson(`/api/vms/${encodeURIComponent(vm.id)}/terminal`, {
+        method: 'POST'
+      });
+      agentTerminal.textContent = 'Opened';
+    } catch (error) {
+      agentState.textContent = error.message;
+    } finally {
+      setTimeout(() => {
+        const now = current();
+        agentTerminal.disabled = !now?.agent?.tunnel || now.agent.status !== 'ready';
+        agentTerminal.textContent = previous;
+      }, 1200);
+    }
+  }
+
+  async function retryApp() {
+    const vm = current();
+    if (!vm) return;
+    const button = $('#retry-app');
+    const previous = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Retrying...';
+    try {
+      const updated = await parse(await fetch(
+        `/api/vms/${encodeURIComponent(vm.id)}/start`,
+        { method: 'POST' }
+      ));
+      merge(updated);
+      setTimeout(load, 500);
+      setTimeout(load, 1600);
+    } catch (error) {
+      setUnavailable(
+        'Could not retry the app: ' + error.message,
+        appErrorLog.textContent || ''
+      );
+    } finally {
+      setTimeout(() => {
+        button.disabled = false;
+        button.textContent = previous;
+      }, 1600);
     }
   }
 
@@ -687,6 +1130,36 @@
     }
   }
 
+  function openAgentDialog() {
+    $('#f-agent-name').value = 'agent-' + String(state.vms.length + 1).padStart(2, '0');
+    dlgAgent.showModal();
+    $('#f-agent-name').focus();
+    $('#f-agent-name').select();
+  }
+
+  async function createAgent(event) {
+    event.preventDefault();
+    const name = $('#f-agent-name').value.trim();
+    if (!name) return;
+    dlgAgent.close();
+    try {
+      const vm = await fileJson('/api/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.slice(0, 40) })
+      });
+      merge(vm);
+      state.selected = vm.id;
+      renderSelected();
+      const started = await fileJson(
+        `/api/vms/${encodeURIComponent(vm.id)}/start`, { method: 'POST' });
+      merge(started);
+      setTimeout(load, 700);
+    } catch (error) {
+      setUnavailable('Could not create the agent machine: ' + error.message);
+    }
+  }
+
   /* ---------------- input ---------------- */
   function sendInput(message) {
     if (!currentControllable()) return;
@@ -725,6 +1198,7 @@
 
   screen.addEventListener('click', (event) => {
     if (event.target.closest('.expand')) return;
+    if (event.target.closest('.app-failure')) return;
     if (!currentControllable()) return;
     if (document.pointerLockElement !== screen) {
       const request = screen.requestPointerLock?.();
@@ -852,6 +1326,16 @@
       const info = await fileJson('/api/info');
       $('#soil-home').textContent = info.home;
     } catch (_) {}
+    try {
+      const status = await fileJson('/api/github/status');
+      $('#gh-service').value = status.workerUrl || '';
+      $('#gh-service-state').textContent = status.configured
+        ? (status.connected ? 'Connected as ' + (status.login || 'GitHub') : 'Configured')
+        : 'Optional, for private repositories';
+      setGhStatus(status);
+    } catch (error) {
+      $('#gh-service-state').textContent = error.message;
+    }
   });
   $('#open-home').addEventListener('click', () => openFile(''));
   $('#close-set').addEventListener('click', () => $('#dlg-set').close());
@@ -861,12 +1345,38 @@
     $('#f-name').focus();
     $('#f-name').select();
   });
+  $('#add-app').addEventListener('click', openAppDialog);
+  $('#add-agent').addEventListener('click', openAgentDialog);
   $('#cancel-new').addEventListener('click', () => $('#dlg-new').close());
+  $('#cancel-app').addEventListener('click', () => dlgApp.close());
+  $('#cancel-agent').addEventListener('click', () => dlgAgent.close());
   $('#new-form').addEventListener('submit', createVm);
+  $('#app-form').addEventListener('submit', createApp);
+  $('#agent-form').addEventListener('submit', createAgent);
+  agentCopy.addEventListener('click', copyAgentCommand);
+  agentTerminal.addEventListener('click', openAgentTerminal);
+  $('#gh-connect').addEventListener('click', connectGitHub);
+  $('#gh-service-save').addEventListener('click', saveGitHubService);
+  appRepo.addEventListener('change', () => {
+    const option = appRepo.selectedOptions[0];
+    if (!option || !option.value) return;
+    $('#f-repo').value = '';
+    if (!$('#f-app-name').value.trim()) {
+      const name = option.dataset.repo || repoNameFromUrl(option.value);
+      if (name) $('#f-app-name').value = name;
+    }
+  });
+  $('#f-repo').addEventListener('input', () => {
+    if ($('#f-app-name').value.trim()) return;
+    const name = repoNameFromUrl($('#f-repo').value);
+    if (name) $('#f-app-name').value = name;
+  });
   $('#cancel-del').addEventListener('click', () => $('#dlg-del').close());
   $('#del-form').addEventListener('submit', deleteVm);
   $('#dlg-del').addEventListener('close', () => { pendingDeleteId = null; });
   $('#expand').addEventListener('click', toggleExpanded);
+  $('#copy-app-log').addEventListener('click', copyAppLog);
+  $('#retry-app').addEventListener('click', retryApp);
   tabMachines.addEventListener('click', () => setView('machines'));
   tabFiles.addEventListener('click', () => setView('files'));
   fileUp.addEventListener('click', () => {

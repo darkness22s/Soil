@@ -11,6 +11,24 @@ public sealed class SoilPaths
     public string AppsDir => Path.Combine(Root, "apps");
     public string SkillsDir => Path.Combine(Root, "skills");
     public string CacheDir => Path.Combine(Root, "cache");
+    public string BuildCacheDir
+    {
+        get
+        {
+            var shared = Environment.GetEnvironmentVariable("SOIL_BUILD_CACHE");
+            if (!string.IsNullOrWhiteSpace(shared))
+            {
+                try
+                {
+                    return Path.GetFullPath(shared);
+                }
+                catch
+                {
+                }
+            }
+            return Path.Combine(CacheDir, "builds");
+        }
+    }
     public string LogsDir => Path.Combine(Root, "logs");
     public string KeysDir => Path.Combine(Root, "keys");
     public string SshDir => Path.Combine(KeysDir, "ssh");
@@ -96,6 +114,7 @@ public sealed class SoilPaths
     public string MachineLogDir(string id) => Path.Combine(MachineDir(id), "logs");
     public string MachineLogPath(string id) => Path.Combine(MachineLogDir(id), "vm.log");
     public string MachineDataDir(string id) => Path.Combine(MachineDir(id), "data");
+    public string MachineDiskPath(string id) => Path.Combine(MachineDataDir(id), "disk.img");
 
     public string EnsureMachine(string id)
     {

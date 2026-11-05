@@ -41,11 +41,11 @@ typedef int64_t  i64;
 #define VH_KERNEL_GPA       0x00100000ULL          /* 1 MiB */
 
 /* Framebuffer. */
-#define VH_FB_W             1024
+#define VH_FB_W             1360
 #define VH_FB_H             768
 #define VH_FB_BPP           32
 #define VH_FB_STRIDE        (VH_FB_W * (VH_FB_BPP / 8))
-#define VH_FB_SIZE          (VH_FB_STRIDE * VH_FB_H)   /* 3 MiB */
+#define VH_FB_SIZE          (VH_FB_STRIDE * VH_FB_H)   /* 4 MiB */
 #define VH_FB_TAIL          0x00800000ULL              /* reserve 8 MiB at top of RAM for fb */
 
 /* Serial (COM1). */
@@ -53,6 +53,7 @@ typedef int64_t  i64;
 
 /* virtio-blk (PCI INT A line reported at 0x3C) */
 #define VH_VBLK_IRQ         11
+#define VH_VBLK_DATA_IRQ    10
 
 /* ------------------------------------------------------------------ */
 /* Guest memory                                                        */
@@ -119,6 +120,9 @@ typedef struct VH_PIT
     u64 lastTickNs;
     u64 nsAccum;
     u8  speakerPort;        /* port 0x61 */
+    /* Catch-up bookkeeping is part of the saved VM state. */
+    u64 cPeriods;
+    u64 startNsSeen;
 } VH_PIT;
 
 /* ------------------------------------------------------------------ */
@@ -225,6 +229,16 @@ typedef struct VH_VM
     /* atomic framebuffer capture handshake (viewer/timer <-> run loop) */
     volatile bool fFbCopyWanted;   /* capture pending: run loop must park */
     volatile bool fFbCopyPaused;   /* run loop parked outside WHvRunVirtualProcessor */
+
+    /* Snapshot coordination between the IPC, timer, and VM run-loop threads. */
+    char szSnapPath[1024];
+    volatile bool fSnapWanted;
+    volatile bool fSnapWorking;
+    bool fCleanExit;
+    bool fSnapRamLazy;
+    FILE *pFileLazy;
+    u8 *pbRamLoaded;
+    u64 cLazyChunks;
 } VH_VM;
 
 /* ------------------------------------------------------------------ */
@@ -260,6 +274,8 @@ int  VhWhvCancelRun(VH_VM *pVm);
 /* devices.c                                                           */
 /* ------------------------------------------------------------------ */
 void VhDevInit(VH_VM *pVm);
+void VhDevResetState(VH_VM *pVm);
+void VhDevPostRestoreFixup(VH_VM *pVm);
 /* Returns true if the port was handled. */
 bool VhDevIoPort(VH_VM *pVm, u16 uPort, bool fWrite, u32 cbWidth, u32 *puValue);
 void VhDevRaiseIrq(VH_VM *pVm, u8 bIrq);
@@ -295,9 +311,16 @@ typedef struct VH_IPC_SHARED
     u32 uStride;
     u32 uReserved;
     u8  abFrame[VH_FB_SIZE];
+    /* Snapshot command tail is beyond the fixed app framebuffer view. */
+    volatile LONG uCmd;
+    volatile LONG cCmdHave;
+    char szCmd[1024];
 } VH_IPC_SHARED;
 
 void VhIpcStart(VH_VM *pVm, const char *pszToken);
+
+#define VH_LAZY_CHUNK 0x10000ULL
+int VhSnapLazyLoad(VH_VM *pVm, u64 uGpa);
 
 /* ------------------------------------------------------------------ */
 /* vmhost.c                                                            */
@@ -320,13 +343,23 @@ void VhPciInit(void);
 bool VhPciIo(VH_VM *pVm, u16 uPort, bool fWrite, u32 cbWidth, u32 *puValue);
 u16  VhPciNicIoBase(void);
 u16  VhPciBlkIoBase(void);
+u16  VhPciBlkDataIoBase(void);
+u32  VhPciSaveState(const u32 **ppbData);
+void VhPciLoadState(const u32 *pbData, u32 cWords);
 
 /* ------------------------------------------------------------------ */
 /* virtio_blk.c                                                        */
 /* ------------------------------------------------------------------ */
 void VhVirtioBlkInit(const char *pszPath);
+void VhVirtioBlkDataInit(const char *pszPath, u32 cbGb);
 bool VhVirtioBlkPresent(void);
+bool VhVirtioBlkDataPresent(void);
 bool VhVirtioBlkIo(VH_VM *pVm, u32 uOffset, bool fWrite, u32 cbWidth, u32 *puValue);
+bool VhVirtioBlkDataIo(VH_VM *pVm, u32 uOffset, bool fWrite, u32 cbWidth, u32 *puValue);
+int  VhVirtioBlkSaveState(const u8 **ppb);
+void VhVirtioBlkLoadState(const u8 *pb);
+int  VhVirtioBlkDataSaveState(const u8 **ppb);
+void VhVirtioBlkDataLoadState(const u8 *pb);
 
 /* ------------------------------------------------------------------ */
 /* ne2000.c                                                            */
@@ -334,7 +367,23 @@ bool VhVirtioBlkIo(VH_VM *pVm, u32 uOffset, bool fWrite, u32 cbWidth, u32 *puVal
 void Ne2000Init(VH_VM *pVm);
 bool Ne2000IoAccess(VH_VM *pVm, u32 uOffset, bool fWrite, u32 cbWidth, u32 *puValue);
 void Ne2000Receive(const u8 *pb, u32 cb);
+void Ne2000BindVm(VH_VM *pVm);
+int  Ne2000SaveState(const u8 **ppb);
+void Ne2000LoadState(const u8 *pb);
 int  Ne2000CanReceive(void);
+
+/* snapshot.c - VM state save/restore */
+typedef struct VhSnapImgRefs
+{
+    const char *pszKernel;
+    const char *pszInitrd;
+    const char *pszDisk;
+    const char *pszDataDisk;
+} VhSnapImgRefs;
+int  VhSnapSave(VH_VM *pVm, const char *pszPath, const VhSnapImgRefs *pRefs);
+int  VhSnapRestore(VH_VM *pVm, const char *pszPath, const VhSnapImgRefs *pRefs);
+int  VhHostSnapSaveExtra(VH_VM *pVm, FILE *pFile);
+int  VhHostSnapRestoreExtra(VH_VM *pVm, FILE *pFile, u32 cbPayload);
 
 /* ------------------------------------------------------------------ */
 /* netglue.c                                                           */

@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "soil-auth",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "GITHUB_CLIENT_ID": "Ov23liw1hzIakJWc3SHF",
+    "GITHUB_SCOPE": "read:user repo"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "SOIL_AUTH",
+      "id": "bb240d56aa5047a69cde5698d68f5a1c"
+    }
+  ]
+}

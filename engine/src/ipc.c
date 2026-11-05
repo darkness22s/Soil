@@ -2,7 +2,7 @@
  * Soil VM engine - host IPC transport for the Soil app.
  *
  * Two channels, both keyed by a caller-supplied token:
- *   Local\SoilFb_<token>     shared framebuffer (header + 1024x768 BGRA)
+ *   Local\SoilFb_<token>     shared framebuffer (header + 1360x768 BGRA)
  *   \\.\pipe\SoilInput_<token> input messages (fixed 16-byte records)
  *
  * The app runs vmhost with --no-ui --ipc <token>; this module then owns the
@@ -148,6 +148,8 @@ static unsigned __stdcall VhIpcInputThread(void *pvArg)
 static unsigned __stdcall VhIpcFrameThread(void *pvArg)
 {
     VH_VM *pVm = (VH_VM *)pvArg;
+    int snapPendingAck = 0;
+    u64 snapWaitStart = 0;
 
     while (!pVm->fStop)
     {
@@ -158,6 +160,28 @@ static unsigned __stdcall VhIpcFrameThread(void *pvArg)
             VhWhvCancelRun(pVm);
             break;
         }
+
+        if (g_pSh && !snapPendingAck &&
+            InterlockedCompareExchange(&g_pSh->uCmd, 0, 1) == 1)
+        {
+            LONG cbPath = InterlockedCompareExchange(&g_pSh->cCmdHave, 0, 0);
+            if (cbPath > 0 && cbPath < (LONG)sizeof(pVm->szSnapPath) &&
+                g_pSh->szCmd[cbPath] == '\0')
+            {
+                memcpy(pVm->szSnapPath, g_pSh->szCmd, (size_t)cbPath + 1);
+                pVm->fSnapWanted = true;
+                snapPendingAck = 1;
+                snapWaitStart = VhGuestNowNs();
+            }
+            else
+                InterlockedExchange(&g_pSh->uCmd, 0);
+        }
+        if (g_pSh && snapPendingAck && !pVm->fSnapWanted && !pVm->fSnapWorking)
+        {
+            InterlockedExchange(&g_pSh->uCmd, 2);
+            snapPendingAck = 0;
+        }
+        (void)snapWaitStart;
 
         if (g_pSh && pVm->mem.pbRam && pVm->mem.gpaFb)
         {

@@ -1,0 +1,38 @@
+name: Soil Windows VM smoke test
+
+on:
+  workflow_dispatch:
+    inputs:
+      images_dir:
+        description: Absolute path to vmlinuz64, core2.gz, and soil.squashfs on the self-hosted runner
+        required: true
+        type: string
+      gcc:
+        description: MinGW-w64 gcc executable path or command available on the runner
+        required: false
+        default: gcc
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  vm-smoke:
+    # GitHub-hosted runners do not officially support nested virtualization.
+    # Register a trusted Windows x64 runner with WHPX enabled and this label.
+    runs-on: [self-hosted, Windows, X64, soil-whpx]
+    timeout-minutes: 20
+    env:
+      SOIL_IMAGES_DIR: ${{ inputs.images_dir }}
+      SOIL_GCC: ${{ inputs.gcc }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Build app and engine
+        shell: pwsh
+        run: .\app\build.ps1 -ImagesDir $env:SOIL_IMAGES_DIR -Gcc $env:SOIL_GCC -SkipMsi
+      - name: Boot guest and verify SSH and MCP forwards
+        shell: pwsh
+        run: .\engine\smoke-test.ps1 -ImagesDir $env:SOIL_IMAGES_DIR -SkipBuild

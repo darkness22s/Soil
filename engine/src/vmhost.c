@@ -18,8 +18,51 @@
 #include <mmsystem.h>
 
 static VH_VM g_Vm;
+enum { VMHOST_MAX_DYN_MMIO_PAGES = 256 };
+static struct { u64 uGpa; void *pvPage; } g_aDynMmio[VMHOST_MAX_DYN_MMIO_PAGES];
+static u32 g_cDynMmioPages;
 static volatile bool g_fInputThreadDone = false;
 static volatile bool g_fStdinEof = false;
+
+int VhHostSnapSaveExtra(VH_VM *pVm, FILE *pFile)
+{
+    u32 count = g_cDynMmioPages;
+    (void)pVm;
+    if (fwrite(&count, sizeof(count), 1, pFile) != 1)
+        return 1;
+    for (u32 i = 0; i < count; i++)
+    {
+        if (fwrite(&g_aDynMmio[i].uGpa, sizeof(u64), 1, pFile) != 1 ||
+            fwrite(g_aDynMmio[i].pvPage, VH_PAGE, 1, pFile) != 1)
+            return 1;
+    }
+    return 0;
+}
+
+int VhHostSnapRestoreExtra(VH_VM *pVm, FILE *pFile, u32 cbPayload)
+{
+    u32 count = 0;
+    if (cbPayload < sizeof(count) || fread(&count, sizeof(count), 1, pFile) != 1 ||
+        count > VMHOST_MAX_DYN_MMIO_PAGES ||
+        cbPayload != sizeof(count) + count * (sizeof(u64) + VH_PAGE))
+        return 1;
+    for (u32 i = 0; i < count; i++)
+    {
+        u64 gpa = 0;
+        void *page = VirtualAlloc(NULL, VH_PAGE, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        if (!page || fread(&gpa, sizeof(gpa), 1, pFile) != 1 ||
+            fread(page, VH_PAGE, 1, pFile) != 1 ||
+            VhWhvMapMmioPage(pVm, gpa, page, VH_PAGE))
+        {
+            if (page) VirtualFree(page, 0, MEM_RELEASE);
+            return 1;
+        }
+        g_aDynMmio[i].uGpa = gpa;
+        g_aDynMmio[i].pvPage = page;
+    }
+    g_cDynMmioPages = count;
+    return 0;
+}
 
 /* ------------------------------------------------------------------ */
 /* MSR state + emulation                                              */
@@ -505,7 +548,7 @@ static volatile LONG g_fFbSnapInit;
 
 void VhFbSnapshot(VH_VM *pVm, u8 *pbDst)
 {
-    if (!pVm->mem.pbRam || !pVm->mem.gpaFb || !pbDst)
+    if (!pVm->mem.pbRam || !pVm->mem.gpaFb || !pbDst || pVm->fSnapWorking || pVm->fSnapWanted)
         return;
     if (InterlockedCompareExchange(&g_fFbSnapInit, 1, 0) == 0)
         InitializeCriticalSection(&g_csFbSnap);
@@ -564,6 +607,11 @@ static unsigned __stdcall TimerThreadProc(void *pvArg)
     u64 uNextBeatNs = VhGuestNowNs() + 60000000000ull;
     while (!pVm->fStop)
     {
+        if (pVm->fSnapWorking)
+        {
+            Sleep(1);
+            continue;
+        }
         VhDevPitTick(pVm, VhGuestNowNs());
         VhNetPoll();
         if (VhDevHasPendingIrq(pVm) && !pVm->fIrqWindowArmed)
@@ -675,7 +723,7 @@ static unsigned __stdcall InputThreadProc(void *pvArg)
 static void usage(void)
 {
     fprintf(stderr,
-            "usage: vmhost --kernel <vmlinuz> --initrd <core.gz> [--cmdline \"...\"] [--ram <MiB>] [--disk <img>] [--log <file>] [--no-ui] [--ipc <token>] [--no-hostfwd] [--ssh-port <port>] [--mcp-port <port>]\n");
+            "usage: vmhost --kernel <vmlinuz> --initrd <core.gz> [--cmdline \"...\"] [--ram <MiB>] [--disk <img>] [--data-disk <img>] [--data-gb <n>] [--log <file>] [--no-ui] [--ipc <token>] [--no-hostfwd] [--ssh-port <port>] [--mcp-port <port>] [--snapshot-out <file>] [--restore <file>]\n");
 }
 
 int main(int argc, char *argv[])
@@ -683,9 +731,13 @@ int main(int argc, char *argv[])
     const char *pszKernel = NULL;
     const char *pszInitrd = NULL;
     const char *pszDisk = NULL;
+    const char *pszDataDisk = NULL;
+    u32 cbDataGb = 0;
     const char *pszCmdLine = "console=ttyS0 loglevel=7 acpi=off noapic nolapic idle=poll";
     const char *pszLogFile = NULL;
     const char *pszIpc = NULL;
+    const char *pszSnapshotOut = NULL;
+    const char *pszRestore = NULL;
     u32 cbRamMiB = 512;
     int sshPort = 2222;
     int mcpPort = 2223;
@@ -700,6 +752,10 @@ int main(int argc, char *argv[])
             pszInitrd = argv[++i];
         else if (!strcmp(argv[i], "--disk") && i + 1 < argc)
             pszDisk = argv[++i];
+        else if (!strcmp(argv[i], "--data-disk") && i + 1 < argc)
+            pszDataDisk = argv[++i];
+        else if (!strcmp(argv[i], "--data-gb") && i + 1 < argc)
+            cbDataGb = (u32)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--cmdline") && i + 1 < argc)
             pszCmdLine = argv[++i];
         else if (!strcmp(argv[i], "--ram") && i + 1 < argc)
@@ -708,6 +764,10 @@ int main(int argc, char *argv[])
             pszLogFile = argv[++i];
         else if (!strcmp(argv[i], "--ipc") && i + 1 < argc)
             pszIpc = argv[++i];
+        else if (!strcmp(argv[i], "--snapshot-out") && i + 1 < argc)
+            pszSnapshotOut = argv[++i];
+        else if (!strcmp(argv[i], "--restore") && i + 1 < argc)
+            pszRestore = argv[++i];
         else if (!strcmp(argv[i], "--ssh-port") && i + 1 < argc)
             sshPort = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--mcp-port") && i + 1 < argc)
@@ -752,6 +812,7 @@ int main(int argc, char *argv[])
     }
 
     VH_VM *pVm = &g_Vm;
+    VhSnapImgRefs snapRefs = { pszKernel, pszInitrd, pszDisk, pszDataDisk };
     memset(pVm, 0, sizeof(*pVm));
     pVm->nsBoot = VhGuestNowNs();
 
@@ -782,11 +843,27 @@ int main(int argc, char *argv[])
     VhNetSetHostFwdPorts(sshPort, mcpPort);
     VhNetInit(pVm, fHostFwd);
     VhVirtioBlkInit(pszDisk);
+    VhVirtioBlkDataInit(pszDataDisk, cbDataGb);
 
-    if (VhGuestLoad(pVm, pszKernel, pszInitrd, pszCmdLine))
-        return 1;
-    if (VhGuestSetupCpu(pVm))
-        return 1;
+    bool fRestored = false;
+    if (pszRestore)
+    {
+        if (!VhSnapRestore(pVm, pszRestore, &snapRefs))
+        {
+            fRestored = true;
+            VhDevPostRestoreFixup(pVm);
+            Ne2000BindVm(pVm);
+        }
+        else
+            VhLog("vmhost: snapshot restore failed; performing clean boot");
+    }
+    if (!fRestored)
+    {
+        if (VhGuestLoad(pVm, pszKernel, pszInitrd, pszCmdLine))
+            return 1;
+        if (VhGuestSetupCpu(pVm))
+            return 1;
+    }
 
     VhLog("vmhost: starting VM (engine pid %lu)", (unsigned long)GetCurrentProcessId());
 
@@ -809,14 +886,18 @@ int main(int argc, char *argv[])
     u64 uLastProgressNs = VhGuestNowNs();
     u32 cStallReports = 0;
 
-    /* on-demand MMIO: unmapped GPAs the guest probes are backed with
-       0xFF-filled pages so absent-device reads behave like a real PC */
-    enum { MAX_DYN_MMIO_PAGES = 256 };
-    struct { u64 uGpa; void *pvPage; } apDynMmio[MAX_DYN_MMIO_PAGES];
-    u32 cDynMmioPages = 0;
+    /* on-demand MMIO pages are kept at file scope for snapshot hooks */
 
     while (!pVm->fStop)
     {
+        if (pVm->fSnapWanted && !pVm->fSnapWorking)
+        {
+            pVm->fSnapWorking = true;
+            VhSnapSave(pVm, pVm->szSnapPath, &snapRefs);
+            pVm->fSnapWanted = false;
+            pVm->fSnapWorking = false;
+            continue;
+        }
         if (pVm->fFbCopyWanted)
         {
             /* park the vCPU for one coherent frame capture */
@@ -918,7 +999,7 @@ int main(int argc, char *argv[])
             {
                 u64 uGpa = exitCtx.MemoryAccess.Gpa;
                 u32 uAccessType = exitCtx.MemoryAccess.AccessInfo.AccessType;   /* 0=read 1=write 2=exec */
-                if (uAccessType == 2 || cDynMmioPages >= MAX_DYN_MMIO_PAGES)
+                if (uAccessType == 2 || g_cDynMmioPages >= VMHOST_MAX_DYN_MMIO_PAGES)
                 {
                     VhLog("vmhost: unexpected memory access exit at GPA %#llx (type=%u rip=%#llx %u instr bytes: %02x %02x %02x %02x) - stopping",
                           (unsigned long long)uGpa, uAccessType,
@@ -932,8 +1013,8 @@ int main(int argc, char *argv[])
 
                 u64 uPage = uGpa & ~(u64)0xFFF;
                 bool fKnown = false;
-                for (u32 i = 0; i < cDynMmioPages; i++)
-                    if (apDynMmio[i].uGpa == uPage)
+                for (u32 i = 0; i < g_cDynMmioPages; i++)
+                    if (g_aDynMmio[i].uGpa == uPage)
                     {
                         fKnown = true;
                         break;
@@ -956,9 +1037,9 @@ int main(int argc, char *argv[])
                         pVm->fStop = true;
                         break;
                     }
-                    apDynMmio[cDynMmioPages].uGpa = uPage;
-                    apDynMmio[cDynMmioPages].pvPage = pvPage;
-                    cDynMmioPages++;
+                    g_aDynMmio[g_cDynMmioPages].uGpa = uPage;
+                    g_aDynMmio[g_cDynMmioPages].pvPage = pvPage;
+                    g_cDynMmioPages++;
                     VhLog("vmhost: mmio: mapped %s @ %#llx as absent-device RAM (rip=%#llx)",
                           uAccessType == 1 ? "write" : "read",
                           (unsigned long long)uGpa, (unsigned long long)exitCtx.VpContext.Rip);
@@ -1013,13 +1094,19 @@ int main(int argc, char *argv[])
     if (hInputThread)
         CloseHandle(hInputThread);
 
-    for (u32 i = 0; i < cDynMmioPages; i++)
-        VirtualFree(apDynMmio[i].pvPage, 0, MEM_RELEASE);
+    for (u32 i = 0; i < g_cDynMmioPages; i++)
+        VirtualFree(g_aDynMmio[i].pvPage, 0, MEM_RELEASE);
 
     VhLog("vmhost: stopped after %llu exits (io=%llu cpuid=%llu msr=%llu halt=%llu intwin=%llu exc=%llu canceled=%llu), %llu timer ticks",
           (unsigned long long)cExits, (unsigned long long)cIo, (unsigned long long)cCpuid,
           (unsigned long long)cMsr, (unsigned long long)cHalts, (unsigned long long)cIntWin,
           (unsigned long long)cExc, (unsigned long long)cCanceled, (unsigned long long)pVm->cTicks);
+
+    if (pszSnapshotOut)
+    {
+        VhLog("vmhost: saving final snapshot to %s", pszSnapshotOut);
+        VhSnapSave(pVm, pszSnapshotOut, &snapRefs);
+    }
 
     VhWhvTerm(pVm);
     return 0;

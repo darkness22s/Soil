@@ -3,7 +3,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$msi = Join-Path $PSScriptRoot "..\dist\Soil-0.2.0-x64.msi"
+$msi = Join-Path $PSScriptRoot "..\dist\Soil-4.2.1-x64.msi"
 
 Push-Location $PSScriptRoot
 try {
