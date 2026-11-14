@@ -1045,7 +1045,7 @@ public sealed class VmManager
             psi.ArgumentList.Add(runtime.Record.RamMb.ToString());
             Directory.CreateDirectory(m_paths.MachineLogDir(runtime.Record.Id));
             psi.ArgumentList.Add("--cmdline");
-            psi.ArgumentList.Add("console=ttyS0 quiet loglevel=3 acpi=off noapic nolapic mitigations=off nozswap");
+            psi.ArgumentList.Add("console=ttyS0 quiet loglevel=3 acpi=off noapic nolapic mitigations=off nozswap idle=poll");
             psi.ArgumentList.Add("--log");
             psi.ArgumentList.Add(m_paths.MachineLogPath(runtime.Record.Id));
             psi.ArgumentList.Add("--no-ui");
@@ -1598,15 +1598,13 @@ public sealed class VmManager
             while (boot.Elapsed < TimeSpan.FromSeconds(90))
             {
                 ct.ThrowIfCancellationRequested();
-                if (proc.HasExited || HasVisibleContent(bootView))
-                    break;
-                await Task.Delay(400, ct);
+                if (proc.HasExited)
+                    return;
+                if (HasVisibleContent(bootView))
+                    return;
+                await Task.Delay(50, ct);
             }
-            // Guest framebuffer availability, not a fixed 25-second sleep,
-            // determines when a headless/no-SSH VM becomes interactable.
-            // Allow two more display frames for compositor initialization.
-            await Task.Delay(TimeSpan.FromMilliseconds(750), ct);
-            return;
+            throw new TimeoutException("The guest did not draw a desktop frame.");
         }
 
         const string probe =
@@ -1640,7 +1638,11 @@ public sealed class VmManager
                 view.ReadArray(offset, buffer, 0, buffer.Length);
                 for (var i = 0; i < buffer.Length; i += 4)
                 {
-                    if (buffer[i] != 0 || buffer[i + 1] != 0 || buffer[i + 2] != 0)
+                    // VhGuestLoad fills the framebuffer with 0x1f before
+                    // running any guest instruction. Do not treat that host
+                    // placeholder as a usable guest desktop.
+                    if (buffer[i] != 0x1f || buffer[i + 1] != 0x1f ||
+                        buffer[i + 2] != 0x1f)
                         return true;
                 }
             }
