@@ -1,0 +1,71 @@
+name: Linux host build and API smoke
+
+on:
+  push:
+    paths:
+      - "app/linux/**"
+      - "app/Soil/ui/**"
+      - "app/Soil/skill/**"
+      - ".github/workflows/linux-build.yml"
+  pull_request:
+    paths:
+      - "app/linux/**"
+      - "app/Soil/ui/**"
+      - "app/Soil/skill/**"
+      - ".github/workflows/linux-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile Python and validate browser adapter
+        run: |
+          python3 -m py_compile app/linux/soil.py app/linux/tests/test_soil.py
+          node --check app/linux/linux-ui.js
+
+      - name: Unit tests (API, persistence, mocked QEMU lifecycle)
+        run: python3 -m unittest discover -s app/linux/tests -v
+
+      - name: Package Linux application
+        run: |
+          bash app/linux/build.sh
+          test -s app/linux/dist/Soil-Linux-x86_64.tar.gz
+          tar -tzf app/linux/dist/Soil-Linux-x86_64.tar.gz | grep -q 'Soil-Linux/ui/app.html'
+          tar -tzf app/linux/dist/Soil-Linux-x86_64.tar.gz | grep -q 'Soil-Linux/soil.py'
+
+      - name: Start packaged host and verify HTTP
+        shell: bash
+        run: |
+          set -euo pipefail
+          app/linux/dist/Soil-Linux/soil --no-browser --home "$RUNNER_TEMP/soil-linux-smoke" > /tmp/soil-linux.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true' EXIT
+          for i in $(seq 1 40); do
+            url=$(grep -oE 'http://127\.0\.0\.1:[0-9]+' /tmp/soil-linux.log | head -1 || true)
+            if [ -n "$url" ] && curl --fail --silent "$url/api/health" | grep -q '"ok": true'; then
+              curl --fail --silent "$url/" | grep -q 'id="newVm"'
+              curl --fail --silent "$url/api/vms" | grep -q '^\[\]$'
+              exit 0
+            fi
+            sleep 0.25
+          done
+          cat /tmp/soil-linux.log
+          exit 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Soil-Linux-x86_64
+          path: app/linux/dist/Soil-Linux-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
