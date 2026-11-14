@@ -40,7 +40,7 @@ function response(data, ok = true, status = 200) {
 test("the default UI uses a working Skill button in place of the MCP badge", () => {
   assert.match(html, /<button[^>]*id="skillBtn"[^>]*aria-haspopup="dialog"/);
   assert.match(html, /<dialog[^>]*id="skillDialog"/);
-  assert.match(html, /<script src="skill-ui.js"><\\/script>/);
+  assert.ok(html.includes('<script src="skill-ui.js"></script>'));
   assert.doesNotMatch(html, /class="mcp-mark"/);
 });
 test("click installs and reports all statuses and loads the bundled instructions", async () => {
