@@ -1,2 +1,0 @@
-# Existing MIT-licensed VNC/RFB automation; bundled at package build time.
-vncdotool==1.4.2

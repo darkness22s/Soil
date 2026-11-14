@@ -82,44 +82,52 @@ health check on an Ubuntu runner. The stub-QEMU unit test checks process
 management, *not* actual guest boot. A true guest-boot test requires the private
 Git LFS images and a suitable virtualization-capable runner.
 
-## Agent computer-use API (Linux VMs)
+## Agent computer use (Linux VMs)
 
-On-demand computer control uses the preexisting MIT-licensed [vncdotool](https://github.com/sibson/vncdotool) VNC/RFB automation library, bundled in
-the Linux tarball. The `vncdotool` CLI is started only for the duration of an
-API request. The app creates no VM or automation process until requested.
+Soil bundles the upstream [vncdotool 1.4.2](https://github.com/sibson/vncdotool)
+(MIT license) for VNC/RFB screenshots and mouse/keyboard input. Soil only
+provides a thin HTTP adapter and on-demand CLI; neither runs an automation
+worker while idle. The original MIT license is preserved in
+`app/linux/third-party/vncdotool-LICENSE.txt` (also in the tarball).
 
-The app binds its API to 127.0.0.1. For **computer use** it additionally
-requires the per-install capability token in `~/.soil/keys/computer-use.token`
-(mode 0600). Never put this token in a public log or share the API port.
+The easiest interface for local agents is the packaged `soil computer` command.
+It discovers the current random API port from `~/.soil/endpoint.json` and reads
+the token privately from `~/.soil/keys/computer-use.token`. Both files are mode
+0600 and use `SOIL_HOME` if the host has a custom home. No manual curl headers
+or port lookup are needed:
 
-With Soil running, take the `http://127.0.0.1:PORT` URL printed by the launcher.
-Use the VM ID from `GET /api/vms`. A VM must already be running.
-
-```sh
-BASE=http://127.0.0.1:PORT   # Replace PORT with Soil's printed port
-VM_ID=your-32-character-vm-id
-TOKEN=$(cat ~/.soil/keys/computer-use.token)
-curl -f -H "Authorization: Bearer $TOKEN" \
-  "$BASE/api/vms/$VM_ID/computer/screenshot" -o screen.png
-curl -f -X POST -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  --data '{"action":"click","x":250,"y":150,"button":"left"}' \
-  "$BASE/api/vms/$VM_ID/computer/action"
-curl -f -X POST -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  --data '{"action":"type","text":"Hello, VM!"}' \
-  "$BASE/api/vms/$VM_ID/computer/action"
+```bash
+soil computer list
+soil computer screenshot <vm-id> screen.png
+soil computer action <vm-id> '{"action":"click","x":250,"y":150}'
+soil computer action <vm-id> '{"action":"type","text":"hello world"}'
+soil computer action <vm-id> '{"action":"key","key":"enter"}'
 ```
 
-Supported JSON actions: `click`, `double_click`, `move`, `scroll` (absolute
-`x`, `y` screenshot pixels), `type` (`text`), and `key` (`key`, including
-`enter` and shortcuts such as `ctrl-c`). Screenshot returns PNG. Calls against
-stopped VMs return 409 and do **not** wake them. Agents should request
-a screenshot after acting and verify the intended result.
+The same functionality is exposed for API clients:
 
-Builds vendor `vncdotool==1.4.2` with dependencies and licenses into the tarball.
-Because these wheels can contain native extensions, use Python **3.12** for the
-published Ubuntu 24.04 artifact. If building on a different Linux distribution
-or Python version, run `build.sh` there to vendor compatible wheels.
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The browser's ordinary
-noVNC console continues to work independently of the agent API.
+- `GET /api/vms`: list machine IDs and statuses.
+- `GET /api/vms/{id}/computer/screenshot`: `image/png`.
+- `POST /api/vms/{id}/computer/action`: JSON body with `action` =
+  `move`, `click`, `double_click`, `scroll`, `type`, or `key`.
+  The response is `{"ok":true}`.
+
+The computer endpoints require `Authorization: Bearer <token>` and
+`Content-Type: application/json` for POST. Token and endpoint files are local
+to the Soil user; never expose the service or its token publicly. Mouse
+coordinates are absolute screenshot pixels. A stopped VM returns HTTP 409
+without waking it. Screenshot after each action to check its effect.
+
+```sh
+BASE=$(python3 -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/".soil/endpoint.json").read_text())["url"])')
+VM_ID=your-32-character-vm-id
+TOKEN=$(cat ~/.soil/keys/computer-use.token)
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+    "$BASE/api/vms/$VM_ID/computer/screenshot" -o screen.png
+unset TOKEN
+```
+
+Builds vendor vncdotool and its dependencies directly into the Linux tarball,
+so **no installation or network fetch occurs when computer use is called**.
+The Ubuntu 24.04 artifact is built with Python 3.12; build on another target
+system when its Python ABI differs. Existing browser noVNC control is unchanged.

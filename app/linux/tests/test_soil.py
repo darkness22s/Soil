@@ -92,27 +92,35 @@ class LinuxHostTests(unittest.TestCase):
         self.assertEqual(token.stat().st_mode & 0o077, 0)
         self.assertEqual(self.host.computer_token, soil.LinuxHost(self.home).computer_token)
 
-    def test_computer_use_action_uses_upstream_vncdo(self):
+    def test_vncdotool_action_mapping_and_input_protection(self):
         from app.linux import computer_use
-        commands = computer_use.action_command({
-            "action": "click", "x": 300, "y": 250, "button": "right"
-        })
-        self.assertEqual(commands, ["move", "300", "250", "click", "3"])
-        self.assertEqual(computer_use.action_command(
-            {"action": "key", "key": "ctrl-c"}), ["key", "ctrl-c"])
-        with self.assertRaises(computer_use.ComputerUseError):
-            computer_use.action_command({"action": "click", "x": -1, "y": 2})
-        with self.assertRaises(computer_use.ComputerUseError):
-            computer_use.action_command({"action": "type", "text": ""})
-        with mock.patch.object(computer_use.subprocess, "run") as run:
-            run.return_value.returncode = 0
-            computer_use.perform(5993, {"action": "type", "text": "hi"})
-            argv = run.call_args.args[0]
+        command = computer_use.action_command
+        self.assertEqual(command({"action": "click", "x": 4, "y": 5, "button": "right"}),
+                         ["move", "4", "5", "click", "3"])
+        self.assertEqual(command({"action": "scroll", "x": 4, "y": 5,
+                                  "direction": "up", "steps": 2}),
+                         ["move", "4", "5", "click", "4", "click", "4"])
+        for supplied, upstream in (("backspace", "bsp"), ("alt", "lalt"),
+                                   ("ctrl-alt-delete", "ctrl-lalt-delete"),
+                                   ("win", "super")):
+            self.assertEqual(command({"action": "key", "key": supplied}), ["key", upstream])
+        for bad in ({"action": "click", "x": -1, "y": 2},
+                    {"action": "type", "text": ""}, {"action": "key", "key": "bogus"},
+                    {"action": "scroll", "x": 1, "y": 2, "direction": "down", "steps": 21}):
+            with self.assertRaises(computer_use.ComputerUseError):
+                command(bad)
+
+        captured = []
+        def fake_run(argv, **kwargs):
             self.assertIn("vncdotool.command", argv)
             self.assertIn("127.0.0.1::5993", argv)
-            self.assertEqual(argv[-2:], ["type", "hi"])
-            self.assertFalse(run.call_args.kwargs.get("shell", False))
-            self.assertEqual(run.call_args.kwargs["timeout"], 12)
+            self.assertIn("typefile", argv)
+            self.assertFalse(kwargs.get("shell", False))
+            captured.append(Path(argv[-1]).read_text(encoding="utf-8"))
+            return mock.Mock(returncode=0)
+        with mock.patch.object(computer_use.subprocess, "run", side_effect=fake_run):
+            computer_use.perform(5993, {"action": "type", "text": "a\nb\tc"})
+        self.assertEqual(captured, ["a\nb\tc"])
 
 
 class ServerTests(unittest.TestCase):
@@ -219,6 +227,40 @@ class ServerTests(unittest.TestCase):
         finally:
             self.host.running.pop(mid)
 
+
+    def test_agent_cli_discovers_endpoint_and_calls_api(self):
+        import contextlib
+        import io
+        from app.linux import computer_cli
+
+        vm = self.host.create("CLI", "m")
+        endpoint = self.host.home / "endpoint.json"
+        self.assertEqual(endpoint.stat().st_mode & 0o077, 0)
+        self.assertEqual(json.loads(endpoint.read_text())["url"], self.server.origin)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            self.assertEqual(computer_cli.main(["--home", str(self.host.home), "list"]), 0)
+        self.assertIn(vm["id"], stdout.getvalue())
+
+        class FakeProc:
+            def poll(self):
+                return None
+        self.host.running[vm["id"]] = {"qemu": FakeProc(), "vnc_port": 5910}
+        try:
+            with mock.patch.object(soil, "computer_perform") as act:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(computer_cli.main(["--home", str(self.host.home),
+                        "action", vm["id"], '{"action":"key","key":"enter"}']), 0)
+                act.assert_called_once_with(5910, {"action": "key", "key": "enter"})
+            with mock.patch.object(soil, "computer_screenshot",
+                                   return_value=b"\x89PNG\r\n\x1a\n" + b"test"):
+                output = self.host.home / "screen.png"
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(computer_cli.main(["--home", str(self.host.home),
+                        "screenshot", vm["id"], str(output)]), 0)
+                self.assertTrue(output.read_bytes().startswith(b"\x89PNG"))
+        finally:
+            self.host.running.pop(vm["id"])
 
 if __name__ == "__main__":
     unittest.main()

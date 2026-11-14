@@ -619,6 +619,11 @@ class SoilServer(ThreadingHTTPServer):
         super().__init__(("127.0.0.1", 0), Handler)
         self.host = host
         self.origin = "http://127.0.0.1:" + str(self.server_port)
+        # Local agents discover the current random port without scanning or
+        # exposing the computer-use token. No additional listener is started.
+        self.endpoint_path = host.home / "endpoint.json"
+        atomic_json(self.endpoint_path, {"url": self.origin})
+        self.endpoint_path.chmod(0o600)
         path = host.home / "ui-state.json"
         self.ui_state = {"onboardingComplete": True, "purpose": "testing",
                          "agents": ["codex", "claude", "sparky"], "package": "tiny",
@@ -628,6 +633,14 @@ class SoilServer(ThreadingHTTPServer):
                 self.ui_state.update(json.loads(path.read_text(encoding="utf-8")))
         except (ValueError, OSError):
             pass
+
+    def server_close(self) -> None:
+        try:
+            if json.loads(self.endpoint_path.read_text(encoding="utf-8")).get("url") == self.origin:
+                self.endpoint_path.unlink(missing_ok=True)
+        except (OSError, ValueError):
+            pass
+        super().server_close()
 
 
 def main(argv: list[str] | None = None) -> int:

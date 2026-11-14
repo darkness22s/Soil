@@ -150,5 +150,5 @@ are not part of the Soil host build.
 
 On Linux, running VMs also expose a token-authenticated, on-demand
 [screenshot and computer-action API](app/linux/README.md#agent-computer-use-api-linux-vms)
-backed by bundled MIT-licensed vncdotool (see
-[third-party notices](app/linux/THIRD_PARTY_NOTICES.md)).
+backed by bundled MIT-licensed vncdotool (see the
+[upstream license](app/linux/third-party/vncdotool-LICENSE.txt)).
