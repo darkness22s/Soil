@@ -2,8 +2,8 @@
 """Repack Soil's Tiny Core initrd to bring up static SSH before optional boot work.
 
 Uses the existing guest scripts, retaining every service and init action. The
-writable per-machine home disk is mounted before SSH to preserve authorized
-keys. The application archive is mounted before invoking dropbear. No kernel,
+writable per-machine home disk and zram swap are ready before SSH so existing
+authorized keys and disk initialization remain unchanged. The application archive is mounted before invoking dropbear. No kernel,
 filesystem, or guest image in git is modified; package an optimized copy at
 build time instead.
 """
@@ -26,14 +26,6 @@ def optimize_bootlocal(script):
     if b"SOIL_FASTBOOT_EARLY_SSH" in script:
         return script
 
-    # Preserve the zram work in full, but defer it until after SSH is launched.
-    zram_begin = exactly_one(script, b"# zram is builtin; mknod")
-    zram_end = exactly_one(script, b"mount -t tmpfs -o size=192m")
-    zram = script[zram_begin:zram_end]
-    if b"mkswap /dev/zram0" not in zram or b"swapon /dev/zram0" not in zram:
-        raise ValueError("Guest swap setup has changed")
-    script = script[:zram_begin] + script[zram_end:]
-
     net_begin = exactly_one(script, b"# network: PCI RTL8029")
     net_end = exactly_one(script, b"# remote-control services:")
     network = script[net_begin:net_end]
@@ -55,8 +47,8 @@ def optimize_bootlocal(script):
         raise ValueError("Guest SSH cannot start before persistent home mount")
 
     early = (b"# SOIL_FASTBOOT_EARLY_SSH: stable home and static image are mounted.\n"
-             b"# Start the remote service before optional extension hooks/swap.\n"
-             b"mkdir -p /etc/dropbear\n" + network + ssh + zram)
+             b"# Start the remote service before optional extension hooks.\n"
+             b"mkdir -p /etc/dropbear\n" + network + ssh)
     return script[:home_end] + early + script[home_end:]
 
 
