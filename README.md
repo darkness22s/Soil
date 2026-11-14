@@ -87,8 +87,9 @@ libraries must be available inside the guest. Type 2 AppImages use
 `APPIMAGE_EXTRACT_AND_RUN=1` to avoid a FUSE requirement. **.deb**, **.rpm**,
 **.iso**, ARM, Windows EXE and shell installers are not supported.
 Apps downloaded from unknown sources can compromise their guest. Only
-import executables you trust. The host needs its existing guest SSH private
-key and forward for transfer and installation.
+import executables you trust. Soil generates a per-install SSH key when needed, injects only its public
+key into each VM's boot image, and keeps the private key in the local Soil
+home. The guest SSH tunnel must be available for installation and launch.
 
 API (local loopback only):
 
