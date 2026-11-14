@@ -7,6 +7,10 @@ if (args.Length != 1)
 var baseDir = Path.GetFullPath(args[0]);
 var home = Path.Combine(Path.GetTempPath(), "soil-vm-lifecycle-" + Guid.NewGuid().ToString("N"));
 var paths = new SoilPaths(home);
+// Exercise the desktop fast-display path even when SSH forwarding is enabled.
+// The desktop must not wait for SSH credentials or agent service readiness.
+Directory.CreateDirectory(paths.SshDir);
+File.WriteAllText(paths.SshKeyPath, "test-only-not-a-valid-ssh-private-key");
 var manager = new VmManager(baseDir, paths);
 var vmId = "";
 
@@ -71,8 +75,11 @@ try
     await AssertNoVmhostAsync();
     // MinGW's live log handle denies concurrent readers on Windows.
     // Inspect it only after vmhost has fully exited and closed the file.
-    if (!File.ReadAllText(paths.MachineLogPath(vmId)).Contains("snap: restored in"))
+    var vmLog = File.ReadAllText(paths.MachineLogPath(vmId));
+    if (!vmLog.Contains("snap: restored in"))
         throw new InvalidOperationException("App restart was not a snapshot restore.");
+    if (!vmLog.Contains("net: hostfwd 127.0.0.1:"))
+        throw new InvalidOperationException("SSH-enabled desktop start did not enable forwarding.");
     if (!File.Exists(paths.MachineSnapshotPath(vmId)))
         throw new InvalidOperationException("Explicit Stop did not create a checkpoint");
     Console.WriteLine("APP: Explicit Stop checkpointed and fully released the VM process.");
