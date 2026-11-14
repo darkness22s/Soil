@@ -930,7 +930,7 @@ public sealed class VmManager
                 await ctx.Response.WriteAsync("\r\n", ct);
                 await ctx.Response.Body.FlushAsync(ct);
             }
-            await Task.Delay(66, ct);
+            await Task.Delay(100, ct);
         }
     }
 
@@ -995,22 +995,6 @@ public sealed class VmManager
             else
             {
                 psi.ArgumentList.Add("--no-hostfwd");
-            }
-            var snapPath = Path.Combine(m_paths.MachineDir(runtime.Record.Id), "boot.snap");
-            var restoreBoot = false;
-            try
-            {
-                restoreBoot = File.Exists(snapPath) && new FileInfo(snapPath).Length > 0;
-            }
-            catch (IOException)
-            {
-            }
-            psi.ArgumentList.Add("--snapshot-out");
-            psi.ArgumentList.Add(snapPath);
-            if (restoreBoot)
-            {
-                psi.ArgumentList.Add("--restore");
-                psi.ArgumentList.Add(snapPath);
             }
             psi.ArgumentList.Add("--ipc");
             psi.ArgumentList.Add(token);
@@ -1095,6 +1079,10 @@ public sealed class VmManager
             pipe = null;
 
             await EnsureGuestGuiReadyAsync(runtime, bootView, proc, ct);
+            if (proc.HasExited)
+                throw new InvalidOperationException(
+                    $"The VM engine exited during startup (code {proc.ExitCode}). " +
+                    $"Check {m_paths.MachineLogPath(runtime.Record.Id)}.");
 
             ct.ThrowIfCancellationRequested();
             var running = false;
@@ -1131,8 +1119,6 @@ public sealed class VmManager
 
             StartGuestStats(runtime);
             _ = Task.Run(() => MonitorExitAsync(runtime, proc));
-            if (!restoreBoot)
-                _ = Task.Run(() => KickFirstBootSnapshotAsync(runtime, snapPath, proc));
         }
         catch (OperationCanceledException)
         {
@@ -1200,6 +1186,9 @@ public sealed class VmManager
         {
             if (ReferenceEquals(runtime.Proc, proc))
             {
+                if (runtime.Status is "running" or "starting")
+                    runtime.Error = $"The VM engine exited unexpectedly (code {proc.ExitCode}). " +
+                                    $"Check {m_paths.MachineLogPath(runtime.Record.Id)}.";
                 runtime.Status = ConsumeParkLocked(runtime);
                 runtime.StartedUtc = null;
                 runtime.History.Clear();
@@ -2295,7 +2284,7 @@ internal sealed class VmRuntime
         else
         {
             using var parameters = new EncoderParameters(1);
-            parameters.Param[0] = new EncoderParameter(Encoder.Quality, 68L);
+            parameters.Param[0] = new EncoderParameter(Encoder.Quality, 60L);
             bitmap.Save(stream, VmManager.JpegCodec, parameters);
         }
         return stream.ToArray();
