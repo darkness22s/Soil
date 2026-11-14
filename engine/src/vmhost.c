@@ -339,6 +339,10 @@ static bool VhHandleStringIo(VH_VM *pVm, const WHV_RUN_VP_EXIT_CONTEXT *pExit)
     u64 uOffset = fWrite ? pIo->Rsi : pIo->Rdi;
     i64 lStep;
     u64 k;
+    /* The vCPU is paused for this REP INS/OUTS exit; its page tables cannot
+       change until we return to WHPX. Translate each 4-KiB GVA page once. */
+    u64 uCachedGvaPage = UINT64_MAX;
+    u64 uCachedGpaPage = 0;
 
     if (s_cStrTrace < 48)
     {
@@ -368,13 +372,40 @@ static bool VhHandleStringIo(VH_VM *pVm, const WHV_RUN_VP_EXIT_CONTEXT *pExit)
         u64 uGpa;
         u32 uVal = 0;
 
-        if (!VhStringTranslateGva(pVm, uGva, &uGpa))
+        u64 uGvaPage = uGva & ~((u64)VH_PAGE - 1);
+        u32 cbFirst = VH_PAGE - (u32)(uGva & (VH_PAGE - 1));
+        u64 uGpaNext = 0;
+        if (uGvaPage != uCachedGvaPage)
         {
-            VhLog("strio: translate FAIL at iter %llu gva=%#llx",
-                  (unsigned long long)k, (unsigned long long)uGva);
-            break;
+            if (!VhStringTranslateGva(pVm, uGva, &uGpa))
+            {
+                VhLog("strio: translate FAIL at iter %llu gva=%#llx",
+                      (unsigned long long)k, (unsigned long long)uGva);
+                break;
+            }
+            uCachedGvaPage = uGvaPage;
+            uCachedGpaPage = uGpa - (uGva & (VH_PAGE - 1));
         }
-        if (uGpa + cbWidth > pVm->mem.cbRam)
+        else
+            uGpa = uCachedGpaPage + (uGva & (VH_PAGE - 1));
+
+        if (cbFirst > cbWidth)
+            cbFirst = cbWidth;
+        /* If an element straddles a guest page boundary, the next physical
+           page may not be contiguous. Never memcpy across it blindly. */
+        if (cbFirst < cbWidth)
+        {
+            if (!VhStringTranslateGva(pVm, uGva + cbFirst, &uGpaNext))
+            {
+                VhLog("strio: cross-page translate FAIL gva=%#llx",
+                      (unsigned long long)(uGva + cbFirst));
+                break;
+            }
+            uCachedGvaPage = (uGva + cbFirst) & ~((u64)VH_PAGE - 1);
+            uCachedGpaPage = uGpaNext - ((uGva + cbFirst) & (VH_PAGE - 1));
+        }
+        if (uGpa + cbFirst > pVm->mem.cbRam ||
+            (cbFirst < cbWidth && uGpaNext + (cbWidth - cbFirst) > pVm->mem.cbRam))
         {
             VhLog("strio: gpa OOB at iter %llu gpa=%#llx", (unsigned long long)k,
                   (unsigned long long)uGpa);
@@ -383,13 +414,19 @@ static bool VhHandleStringIo(VH_VM *pVm, const WHV_RUN_VP_EXIT_CONTEXT *pExit)
 
         if (fWrite)
         {
-            memcpy(&uVal, pVm->mem.pbRam + uGpa, cbWidth);
+            memcpy(&uVal, pVm->mem.pbRam + uGpa, cbFirst);
+            if (cbFirst < cbWidth)
+                memcpy((u8 *)&uVal + cbFirst, pVm->mem.pbRam + uGpaNext,
+                       cbWidth - cbFirst);
             VhDevIoPort(pVm, uPort, true, cbWidth, &uVal);
         }
         else
         {
             VhDevIoPort(pVm, uPort, false, cbWidth, &uVal);
-            memcpy(pVm->mem.pbRam + uGpa, &uVal, cbWidth);
+            memcpy(pVm->mem.pbRam + uGpa, &uVal, cbFirst);
+            if (cbFirst < cbWidth)
+                memcpy(pVm->mem.pbRam + uGpaNext, (u8 *)&uVal + cbFirst,
+                       cbWidth - cbFirst);
         }
         uOffset += (u64)lStep;
     }
