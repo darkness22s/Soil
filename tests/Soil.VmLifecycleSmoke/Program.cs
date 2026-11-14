@@ -26,11 +26,20 @@ async Task<VmDto> WaitStatusAsync(string expected, int timeoutSeconds)
         manager.List().Single(x => x.Id == vmId).Status);
 }
 
-static void AssertNoVmhost()
+static async Task AssertNoVmhostAsync()
 {
-    using var processes = new ProcessCollection(Process.GetProcessesByName("vmhost"));
-    if (processes.Processes.Length != 0)
-        throw new InvalidOperationException("Parked VM still has a vmhost.exe process");
+    var deadline = Stopwatch.StartNew();
+    int[] lastPids = [];
+    while (deadline.Elapsed < TimeSpan.FromSeconds(10))
+    {
+        using var processes = new ProcessCollection(Process.GetProcessesByName("vmhost"));
+        lastPids = processes.Processes.Where(p => !p.HasExited).Select(p => p.Id).ToArray();
+        if (lastPids.Length == 0)
+            return;
+        await Task.Delay(200);
+    }
+    throw new InvalidOperationException("VM idle/stop left live vmhost.exe PIDs: " +
+                                        string.Join(", ", lastPids));
 }
 
 // Dispose Process objects returned by Process.GetProcessesByName.
@@ -48,7 +57,7 @@ try
 
     manager.IdleAll();
     await WaitStatusAsync("idle", 120);
-    AssertNoVmhost();
+    await AssertNoVmhostAsync();
     if (!File.Exists(paths.MachineSnapshotPath(vmId)))
         throw new InvalidOperationException("IdleAll did not create a checkpoint");
     Console.WriteLine("APP: IdleAll snapshotted and exited; no vmhost.exe remains.");
@@ -59,7 +68,7 @@ try
     Console.WriteLine($"APP: Recalled VM reached running in {resume.Elapsed.TotalMilliseconds:F1} ms");
     manager.Stop(vmId);
     await WaitStatusAsync("stopped", 120);
-    AssertNoVmhost();
+    await AssertNoVmhostAsync();
     // MinGW's live log handle denies concurrent readers on Windows.
     // Inspect it only after vmhost has fully exited and closed the file.
     if (!File.ReadAllText(paths.MachineLogPath(vmId)).Contains("snap: restored in"))
