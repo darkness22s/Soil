@@ -537,8 +537,15 @@ public sealed class VmManager
             // Never race the snapshot writer by starting a second vmhost.
             if (runtime.Status == "stopping")
             {
-                runtime.RestartAfterStop = true;
-                return BundleLocked(record);
+                if (runtime.Proc is { HasExited: false })
+                {
+                    runtime.RestartAfterStop = true;
+                    return BundleLocked(record);
+                }
+                // The prior engine has already exited but its StopAsync may not
+                // have observed it yet. Clean it now to avoid losing the recall.
+                CleanupLocked(runtime);
+                runtime.Status = "stopped";
             }
             runtime.ParkPending = false;
             runtime.RestartAfterStop = false;
@@ -785,7 +792,7 @@ public sealed class VmManager
         {
             try
             {
-                if (!runtime.Proc!.WaitForExit(30000))
+                if (!runtime.Proc!.WaitForExit(90000))
                     runtime.Proc.Kill(true);
             }
             catch
@@ -808,7 +815,10 @@ public sealed class VmManager
         {
             foreach (var runtime in m_runtimes.Values)
             {
-                if (runtime.Deleting || runtime.ParkPending || runtime.Status != "running")
+                // Imported apps and agent workers can still be serving requests
+                // while the window is unfocused; only park interactive desktops.
+                if (runtime.Deleting || runtime.ParkPending || runtime.Status != "running" ||
+                    !string.Equals(runtime.Record.Kind, "desktop", StringComparison.OrdinalIgnoreCase))
                     continue;
                 var proc = runtime.Proc;
                 if (proc is null || proc.HasExited)
@@ -1069,7 +1079,18 @@ public sealed class VmManager
             proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
             proc.OutputDataReceived += (_, _) => { };
             proc.ErrorDataReceived += (_, _) => { };
-            proc.Start();
+            try
+            {
+                proc.Start();
+            }
+            catch
+            {
+                // An OS-level launch failure never executed guest instructions,
+                // so the original checkpoint is still safe to retry.
+                if (File.Exists(restorePath) && !File.Exists(snapshotPath))
+                    File.Move(restorePath, snapshotPath);
+                throw;
+            }
             proc.BeginOutputReadLine();
             proc.BeginErrorReadLine();
 
@@ -1303,7 +1324,7 @@ public sealed class VmManager
 
         try
         {
-            if (!await WaitForExitAsync(proc, TimeSpan.FromSeconds(20)))
+            if (!await WaitForExitAsync(proc, TimeSpan.FromSeconds(90)))
                 proc.Kill(true);
         }
         catch
