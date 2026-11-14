@@ -102,14 +102,28 @@ def inject(source: Path, destination: Path, launcher: Path) -> None:
     print(f"Embedded native Linux launcher in {destination} ({len(output)} bytes)")
 
 
+def verify(image: Path, launcher: Path) -> None:
+    payload = gzip.decompress(image.read_bytes())
+    script = launcher.read_bytes()
+    if (GUEST_PATH.encode() + b"\0" not in payload or script not in payload:
+        raise ValueError("The bundled core2.gz does not contain the required guest native launcher.")
+    if len(payload) <= 65536:
+        raise ValueError("The bundled guest image is unexpectedly small.")
+    print(f"Verified native Linux app launcher embedded in {image}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path, help="Original bundled core2.gz")
     parser.add_argument("destination", type=Path, help="Patched initramfs output")
     parser.add_argument("--launcher", type=Path, default=Path(__file__).resolve().parents[2] /
                         "soil-sdk" / "runtime" / "soil-native")
+    parser.add_argument("--verify", action="store_true", help="Verify a patched core2.gz")
     args = parser.parse_args()
-    inject(args.source, args.destination, args.launcher)
+    if args.verify:
+        verify(args.source, args.launcher)
+    else:
+        inject(args.source, args.destination, args.launcher)
 
 
 if __name__ == "__main__":
