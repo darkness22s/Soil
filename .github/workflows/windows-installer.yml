@@ -46,6 +46,10 @@ jobs:
           if (-not $gcc) { throw "gcc.exe not found under $mingwRoot" }
           $env:PATH = "$($gcc.DirectoryName);$env:PATH"
           .\app\build.ps1 -ImagesDir .\app\images -Gcc $gcc.FullName
+      - name: Test per-VM SSH key injection into real packaged guest initramfs
+        shell: pwsh
+        run: dotnet run --project tools/soil-ci/GuestInitrdSmoke/GuestInitrdSmoke.csproj -- app/dist/Soil/images/core2.gz
+
       - name: Syntax-check JavaScript
         shell: pwsh
         run: |
