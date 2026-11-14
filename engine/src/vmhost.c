@@ -791,7 +791,9 @@ int main(int argc, char *argv[])
 
     if (VhWhvInit(pVm, 1))
         return 1;
-    if (VhWhvMapRam(pVm))
+    /* A snapshot restores RAM on fault, rather than allocating/mapping every
+       guest page before the first instruction. Cold boot maps all RAM. */
+    if (pszRestore ? VhWhvMapScratch(pVm) : VhWhvMapRam(pVm))
         return 1;
     if (VhWhvCreateCpu(pVm))
         return 1;
@@ -816,6 +818,17 @@ int main(int argc, char *argv[])
     }
     if (!fRestored)
     {
+        /* A rejected snapshot may have mapped a few lazy chunks already.
+           Reset the guest address space before doing a normal cold boot. */
+        if (pszRestore)
+        {
+            HRESULT unmap = WHvUnmapGpaRange(pVm->hPartition, 0, pVm->mem.cbRam);
+            if (FAILED(unmap) || VhWhvMapRam(pVm))
+            {
+                VhLog("vmhost: could not remap guest RAM for cold boot");
+                return 1;
+            }
+        }
         if (VhGuestLoad(pVm, pszKernel, pszInitrd, pszCmdLine))
             return 1;
         if (VhGuestSetupCpu(pVm))
@@ -956,6 +969,17 @@ int main(int argc, char *argv[])
             {
                 u64 uGpa = exitCtx.MemoryAccess.Gpa;
                 u32 uAccessType = exitCtx.MemoryAccess.AccessInfo.AccessType;   /* 0=read 1=write 2=exec */
+                if (pVm->fSnapRamLazy && uGpa < pVm->mem.cbRam &&
+                    !(uGpa >= 0xA0000 && uGpa < 0x100000))
+                {
+                    if (VhSnapLazyLoad(pVm, uGpa))
+                    {
+                        VhLog("vmhost: snapshot page-in failed at %#llx",
+                              (unsigned long long)uGpa);
+                        pVm->fStop = true;
+                    }
+                    break; /* retry the same guest instruction after page-in */
+                }
                 if (uAccessType == 2 || g_cDynMmioPages >= VMHOST_MAX_DYN_MMIO_PAGES)
                 {
                     VhLog("vmhost: unexpected memory access exit at GPA %#llx (type=%u rip=%#llx %u instr bytes: %02x %02x %02x %02x) - stopping",
@@ -1051,9 +1075,7 @@ int main(int argc, char *argv[])
     if (hInputThread)
         CloseHandle(hInputThread);
 
-    for (u32 i = 0; i < g_cDynMmioPages; i++)
-        VirtualFree(g_aDynMmio[i].pvPage, 0, MEM_RELEASE);
-
+    /* MMIO state is part of the checkpoint; keep its pages until saved. */
     VhLog("vmhost: stopped after %llu exits (io=%llu cpuid=%llu msr=%llu halt=%llu intwin=%llu exc=%llu canceled=%llu), %llu timer ticks",
           (unsigned long long)cExits, (unsigned long long)cIo, (unsigned long long)cCpuid,
           (unsigned long long)cMsr, (unsigned long long)cHalts, (unsigned long long)cIntWin,
@@ -1070,6 +1092,8 @@ int main(int argc, char *argv[])
     else if (pszSnapshotOut)
         VhLog("vmhost: unclean exit; not saving snapshot");
 
+    for (u32 i = 0; i < g_cDynMmioPages; i++)
+        VirtualFree(g_aDynMmio[i].pvPage, 0, MEM_RELEASE);
     VhWhvTerm(pVm);
     return 0;
 }
