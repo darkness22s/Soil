@@ -1059,11 +1059,16 @@ int main(int argc, char *argv[])
           (unsigned long long)cMsr, (unsigned long long)cHalts, (unsigned long long)cIntWin,
           (unsigned long long)cExc, (unsigned long long)cCanceled, (unsigned long long)pVm->cTicks);
 
-    if (pszSnapshotOut)
+    /* Never replace a good snapshot with CPU/device state after an engine crash.
+       Only a host-initiated, clean stop is safe to checkpoint. */
+    if (pszSnapshotOut && pVm->fCleanExit)
     {
         VhLog("vmhost: saving final snapshot to %s", pszSnapshotOut);
-        VhSnapSave(pVm, pszSnapshotOut, &snapRefs);
+        if (VhSnapSave(pVm, pszSnapshotOut, &snapRefs))
+            VhLog("vmhost: snapshot save failed; next start will cold boot");
     }
+    else if (pszSnapshotOut)
+        VhLog("vmhost: unclean exit; not saving snapshot");
 
     VhWhvTerm(pVm);
     return 0;
