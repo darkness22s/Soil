@@ -50,6 +50,7 @@ function Test-SshBanner([int]$port) {
 }
 
 function Start-Guest([string]$logPath, [string]$restorePath) {
+    $script:activeLogPath = $logPath
     $script:sshPort = Get-FreePort
     $mcpPort = Get-FreePort
     while ($mcpPort -eq $script:sshPort) { $mcpPort = Get-FreePort }
@@ -115,6 +116,9 @@ function Stop-GuestClean {
         throw "Snapshot is incomplete: expected at least 512 MiB of RAM."
     }
     Write-Host "Snapshot written; vmhost has exited (no guest CPU or RAM retained)."
+    $profile = Get-Content -LiteralPath $script:activeLogPath |
+        Select-String 'vmhost: stopped after' | Select-Object -Last 1
+    if ($profile) { Write-Host ("VM exit profile: " + $profile.Line) }
     $script:live.Dispose()
     $script:live = $null
 }
