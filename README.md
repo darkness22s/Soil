@@ -72,6 +72,44 @@ lives on a sparse data disk at `%USERPROFILE%\.soil\machines\<id>\data\disk.img`
 and survives stops and restarts; the system image stays read-only. Sign-in pages
 open in the machine's built-in browser.
 
+## Windows VM checkpoints and on-demand recall
+
+Windows desktop machines start **only on request**. On a clean Stop, Soil
+checkpoints the guest CPU, device state, and RAM to
+`~/.soil/machines/<id>/resume.snap` and exits the VM engine. A parked or
+stopped VM has no running `vmhost.exe` process and uses **no guest CPU or
+resident VM memory**; its snapshot and persistent data disk still occupy disk
+space. The Soil UI/server itself continues to use normal application resources.
+
+On the next explicit Start, Soil consumes the checkpoint, creates a fresh WHPX
+partition, restores CPU/device state, and loads guest RAM in 64-KiB chunks only
+as needed. If the checkpoint is invalid, the engine falls back to a cold boot.
+A one-shot in-use checkpoint is never replayed after a VM crash, because a
+disk might have changed since that snapshot.
+
+Interactive desktop VMs also **park automatically after 90 seconds with the
+Soil window minimized or unfocused**. Refocusing Soil does not wake them:
+press Start to recall the VM. Active app imports and AI-agent workers are
+excluded from automatic focus-based parking because their ongoing background
+work must not be silently interrupted; their Stop control still checkpoints
+and releases the VM. Closing Soil stops all remaining VMs.
+
+A true end-to-end boot from an exited process **cannot be guaranteed under
+5 milliseconds**: host process launch, WHPX setup, snapshot I/O, network
+startup, and guest readiness all have costs. The engine reports the internal
+snapshot restore duration separately from end-to-end guest-ready time. To
+measure on a trusted Windows x64 machine with WHPX and real guest images:
+
+```powershell
+.\engine\snapshot-smoke-test.ps1 -ImagesDir .\app\images
+```
+
+This test verifies guest SSH readiness, checkpoint creation, full engine exit,
+snapshot restore, and repeat checkpoint. It can also run in the
+`soil-vm-smoke.yml` workflow using a self-hosted `soil-whpx` Windows runner.
+These timings are not validated by GitHub's ordinary Windows build runner,
+which is unsuitable for nested-virtualization measurements.
+
 ## Build cache
 
 Imported static apps are cached under `~/.soil/cache/builds` by source archive
