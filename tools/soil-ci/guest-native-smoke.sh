@@ -56,7 +56,7 @@ qemu-system-x86_64 \
   -drive file="$images/soil.squashfs",format=raw,if=virtio,readonly=on \
   -drive file="$tmp/data.img",format=raw,if=virtio \
   -netdev user,id=soilnet,hostfwd=tcp:127.0.0.1:22822-:22 \
-  -device ne2k_pci,netdev=soilnet \
+  -device virtio-net-pci,netdev=soilnet \
   -vga std -display none -serial file:"$tmp/serial.log" \
   -monitor none -no-reboot >"$tmp/qemu.log" 2>&1 &
 qemu_pid=$!
@@ -78,6 +78,10 @@ for attempt in $(seq 1 90); do
 done
 if [[ "$reachable" != 1 ]]; then
   echo "Real Soil guest boot did not provide authenticated SSH and soil-native" >&2
+  echo "SSH failure diagnostics:" >&2
+  timeout 8 ssh -vvv "${ssh_opts[@]}" tc@127.0.0.1 "id -un" >&2 || true
+  echo "Guest networking and SSH boot diagnostics:" >&2
+  grep -Ei 'eth|dhcp|network|dropbear|ssh|pubkey' "$tmp/serial.log" | tail -n 60 >&2 || true
   tail -n 100 "$tmp/serial.log" >&2 || true
   tail -n 100 "$tmp/qemu.log" >&2 || true
   exit 1
