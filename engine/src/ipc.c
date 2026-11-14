@@ -137,10 +137,9 @@ static unsigned __stdcall VhIpcInputThread(void *pvArg)
         if (g_pVm->fStop)
             break;
 
-        VhLog("ipc: input client disconnected - stopping VM");
-        g_pVm->fStop = true;
-        VhWhvCancelRun(g_pVm);
-        break;
+        VhLog("ipc: input client disconnected; accepting a new connection");
+        /* The frame/stop channel owns VM lifetime. Reattach an input client
+           without terminating the VM if the caller restarts. */
     }
     return 0;
 }
@@ -188,7 +187,7 @@ static unsigned __stdcall VhIpcFrameThread(void *pvArg)
             VhFbSnapshot(pVm, g_pSh->abFrame);
             InterlockedIncrement((volatile LONG *)&g_pSh->uSeq);
         }
-        Sleep(66);
+        Sleep(100);
     }
     return 0;
 }
