@@ -1,6 +1,7 @@
 param(
     [string]$Configuration = "Release",
     [string]$ImagesDir = "",
+    [string]$Gcc = "",
     [switch]$SkipEngine,
     [switch]$SkipMsi
 )
@@ -11,7 +12,7 @@ $root = Split-Path -Parent $app
 $out = Join-Path $app "dist\Soil"
 
 if (-not $SkipEngine) {
-    & (Join-Path $root "engine\build.ps1")
+    & (Join-Path $root "engine\build.ps1") -Gcc $Gcc
     if (-not $?) {
         throw "Engine build failed."
     }
@@ -53,7 +54,7 @@ if ((Resolve-Path -LiteralPath $imagesSource).Path -ne (Resolve-Path -LiteralPat
 }
 
 $readme = @"
-Soil 4.2.0 - private local build
+Soil 4.2.1 - private local build
 
 Private build. Not for public release or upload.
 
@@ -61,13 +62,20 @@ Requirements
 - Windows 10/11 x64
 - Microsoft Edge WebView2 Runtime (usually included with Windows 11)
 - Hardware virtualization and the Windows Hypervisor Platform feature enabled
+- Node.js 20 or newer on the PC for JavaScript apps (optional)
+- Python 3.8 or newer to package imported apps for the native .sol runtime (optional)
 
 Use
 - Launch Soil from the Start Menu.
 - Create machines with +, start them with the power switch, and click the screen to capture input.
-- Machines resume from a saved snapshot instead of booting again; minimizing the window parks running machines and restoring it brings them back.
+- Use the terminal + to create a 512 MB agent machine with Claude Code and Codex CLI, then open its SSH tunnel.
+- Agent home directories and sign-in state live on each machine data disk and survive restarts.
+- Machine boot state is snapshotted automatically and restored on subsequent starts; running machines are parked to disk while Soil is minimized.
+- Sign-in pages open in the machine's built-in browser.
+- Use the branch button to import a GitHub repository into its own app machine.
 - Browse machines, apps, skills, cache, and logs from Files.
 - Machine data lives in %USERPROFILE%\.soil.
+- Private repositories use the optional GitHub OAuth Worker in app\auth-worker.
 
 Uninstall
 - Settings > Apps > Installed apps > Soil
@@ -76,7 +84,8 @@ Uninstall
 Packaging
 - Self-contained .NET 8 x64 application.
 - Bundled VM engine and guest images.
-- No telemetry, external fonts, or cloud services.
+- No telemetry or external fonts.
+- Optional self-hosted Cloudflare OAuth relay for private GitHub repositories.
 "@
 Set-Content -LiteralPath (Join-Path $out "README.txt") -Value $readme -Encoding UTF8
 

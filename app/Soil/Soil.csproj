@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Soil</AssemblyName>
     <RootNamespace>Soil</RootNamespace>
-    <Version>4.2.0</Version>
+    <Version>4.2.1</Version>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>false</PublishSingleFile>
@@ -22,6 +22,21 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="ui\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\soil-sdk\tools\soilmk.py"
+             Link="soil-tools\soilmk.py">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\soil-sdk\tools\mksquashfs.py"
+             Link="soil-tools\mksquashfs.py">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\soil-sdk\samples\frontend\icon.png"
+             Link="soil-tools\icon.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>

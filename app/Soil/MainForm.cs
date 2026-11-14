@@ -27,34 +27,23 @@ public sealed class MainForm : Form
         Resize += OnResized;
     }
 
-    // Idle mode: while the window is minimized the guests are parked — the
-    // snapshot file is all that remains of them, no process at all. Opening
-    // the window again calls them back with a snapshot resume.
+    // Park running guests into snapshots while the app is minimized, then
+    // restore their saved state when the window is shown again.
     private void OnResized(object? sender, EventArgs e)
     {
         var minimized = WindowState == FormWindowState.Minimized;
         if (minimized == m_minimized)
             return;
         m_minimized = minimized;
-        if (minimized)
+        try
         {
-            try
-            {
+            if (minimized)
                 m_vmManager.IdleAll();
-            }
-            catch
-            {
-            }
-        }
-        else
-        {
-            try
-            {
+            else
                 m_vmManager.ResumeAll();
-            }
-            catch
-            {
-            }
+        }
+        catch
+        {
         }
     }
 

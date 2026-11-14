@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Soil VM engine - instant-boot snapshots.
  *
  * Captures the entire VM state (guest RAM, CPU context, device models) into
@@ -57,6 +57,7 @@
 #define SNAP_TAG_SCRATCH  13
 #define SNAP_TAG_RAM_FULL 14
 #define SNAP_TAG_PAD      15
+#define SNAP_TAG_VBLK_DATA 16
 
 typedef struct SnapHeader
 {
@@ -713,6 +714,21 @@ int VhSnapSave(VH_VM *pVm, const char *pszPath, const VhSnapImgRefs *pRefs)
         cSections++;
     }
 
+    /* ---- data virtio-blk state (if attached) ---- */
+    if (VhVirtioBlkDataPresent())
+    {
+        const u8 *pb = NULL;
+        int cb = VhVirtioBlkDataSaveState(&pb);
+        u64 nTag = 0;
+        if (cb <= 0 || swBegin(&w, SNAP_TAG_VBLK_DATA, &nTag) ||
+            swWrite(&w, pb, (u64)cb) || swEnd(&w, nTag))
+        {
+            VhLog("snap: data vblk section failed");
+            goto save_out;
+        }
+        cSections++;
+    }
+
     /* ---- PCI config statics ---- */
     {
         const u32 *pb = NULL;
@@ -1207,6 +1223,25 @@ int VhSnapRestore(VH_VM *pVm, const char *pszPath, const VhSnapImgRefs *pRefs)
             VhVirtioBlkLoadState(pbTmp);
             free(pbTmp);
             fHasVblk = 1;
+        }
+        else if (uTag == SNAP_TAG_VBLK_DATA)
+        {
+            const u8 *pbSaved = NULL;
+            int cbWant = VhVirtioBlkDataSaveState(&pbSaved);
+            if (cbWant <= 0 || cbPayload != (u32)cbWant)
+            {
+                fFatal = 1;
+                break;
+            }
+            u8 *pbTmp = (u8 *)malloc((size_t)cbPayload);
+            if (!pbTmp || fread(pbTmp, 1, cbPayload, pFile) != cbPayload)
+            {
+                free(pbTmp);
+                fFatal = 1;
+                break;
+            }
+            VhVirtioBlkDataLoadState(pbTmp);
+            free(pbTmp);
         }
         else if (uTag == SNAP_TAG_PCI)
         {

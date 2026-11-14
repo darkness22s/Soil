@@ -16,7 +16,7 @@
 <button class="tab" id="tab-files" type="button">Files</button>
 </nav>
 <div class="machine-nav" id="machine-nav">
-<div class="shead"><h2>Machines</h2><button class="plus wipe" id="add" aria-label="New VM"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v11M2.5 8h11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button></div>
+<div class="shead"><h2>Machines</h2><div class="sheadactions"><button class="plus wipe" id="add-agent" aria-label="New agent machine" title="New agent machine"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.2h10v8.2H3zM5.5 7l2 1.6-2 1.6M9 10.2h2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button><button class="plus wipe" id="add-app" aria-label="New app from GitHub" title="New app from GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 4.6a1.6 1.6 0 1 0 0-3.2 1.6 1.6 0 0 0 0 3.2Zm6 5a1.6 1.6 0 1 0 0-3.2 1.6 1.6 0 0 0 0 3.2ZM5 14.6a1.6 1.6 0 1 0 0-3.2 1.6 1.6 0 0 0 0 3.2ZM5 4.6v6.8M11 7.4c0-2-2.2-2.2-6-2.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button><button class="plus wipe" id="add" aria-label="New VM" title="New VM"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v11M2.5 8h11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button></div></div>
 <div class="list" id="list"></div>
 </div>
 <div class="files-nav" id="files-nav" hidden>
@@ -30,8 +30,32 @@
 <section class="screen" id="screen" tabindex="0" aria-label="VM screen">
 <button class="expand wipe" id="expand" aria-label="Expand screen"><svg class="i-e" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><svg class="i-x" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2v4H2M10 2v4h4M10 14v-4h4M6 14v-4H2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
 <img class="vm-screen" id="vmscreen" alt="Live VM screen" draggable="false">
-<div class="unavail" id="unavail">Start this machine to see its screen</div>
+<div class="unavail" id="unavail">
+<span id="unavail-text">Start this machine to see its screen</span>
+<div class="app-failure" id="app-failure" hidden>
+<pre class="app-log" id="app-error-log"></pre>
+<div class="app-failure-actions">
+<button class="q sm" id="copy-app-log" type="button">Copy log</button>
+<button class="q sm" id="retry-app" type="button">Retry</button>
+</div>
+</div>
+</div>
 <div class="hint" id="hint">Click the screen to capture the keyboard and mouse</div>
+</section>
+<section class="agent" id="agent" hidden>
+<div class="agent-head">
+<div>
+<h2>Agent tunnel</h2>
+<p class="note" id="agent-state">Preparing the machine...</p>
+</div>
+<div class="agent-actions">
+<button class="q sm" id="agent-copy" type="button">Copy SSH command</button>
+<button class="btn sm" id="agent-terminal" type="button">Open tunnel</button>
+</div>
+</div>
+<code class="agent-command" id="agent-command">Start the machine to open the SSH tunnel.</code>
+<p class="agent-hint">Run <code>claude</code> or <code>codex</code> inside the tunnel. Sign in on first use; the machine home and sign-in stay on its disk. Login pages open in the machine browser.</p>
+<pre class="agent-log" id="agent-log" hidden></pre>
 </section>
 <section class="charts" id="charts">
 <article class="card" data-k="cpu"><div class="ch"><h3>CPU</h3><div><div class="big" data-big>—</div><div class="sub" data-sub></div></div></div><div class="plot"></div><p class="empty">Start this machine to see its charts</p></article>
@@ -76,6 +100,39 @@
 </form>
 </dialog>
 
+<dialog id="dlg-agent">
+<form class="dlg" id="agent-form">
+<h3>New agent machine</h3>
+<p class="note">Creates a 512 MB Soil machine with Claude Code and Codex CLI ready to run, plus a private SSH tunnel on your PC.</p>
+<label class="field">Name<input class="in" id="f-agent-name" required maxlength="40" autocomplete="off"></label>
+<p class="note">The CLI tools are part of the guest image. Sign in to each CLI through the tunnel.</p>
+<div class="btns"><button type="button" class="q" id="cancel-agent">Cancel</button><button class="btn wipe" type="submit">Create agent</button></div>
+</form>
+</dialog>
+
+<dialog id="dlg-app">
+<form class="dlg" id="app-form">
+<h3>New app</h3>
+<p class="note">Import a GitHub repository into its own Soil machine. Only import repositories you trust; setup scripts run as your Windows user.</p>
+<div class="ghrow">
+<div class="ghtext"><strong id="gh-login">GitHub account</strong><span class="mono" id="gh-state">Not connected</span></div>
+<button type="button" class="q sm" id="gh-connect">Connect</button>
+</div>
+<label class="field">Your repositories<select class="in" id="app-repo" disabled><option value="">Connect GitHub to list repositories</option></select></label>
+<div class="split"><span>or paste a public repository</span></div>
+<label class="field">GitHub URL<input class="in" id="f-repo" placeholder="https://github.com/owner/repo" autocomplete="off" spellcheck="false"></label>
+<label class="field">Name<input class="in" id="f-app-name" maxlength="40" autocomplete="off"></label>
+<div class="field">Size<div class="chips">
+<label><input type="radio" name="app-size" value="s"><span>Small<small>512 MB &middot; 1 vCPU</small></span></label>
+<label><input type="radio" name="app-size" value="m" checked><span>Medium<small>1 GB &middot; 1 vCPU</small></span></label>
+<label><input type="radio" name="app-size" value="l"><span>Large<small>2 GB &middot; 1 vCPU</small></span></label>
+</div></div>
+<p class="note" id="app-note">JavaScript apps need Node.js 20 or newer on this PC. Buildable web and Electron renderer projects are packaged as a native .sol app and added to the machine desktop; Electron itself is not included.</p>
+<div class="app-progress" id="app-progress" hidden><span id="app-progress-text"></span><pre id="app-log"></pre></div>
+<div class="btns"><button type="button" class="q" id="cancel-app">Cancel</button><button class="btn wipe" type="submit">Create app</button></div>
+</form>
+</dialog>
+
 <dialog id="dlg-del">
 <form class="dlg" id="del-form">
 <h3>Delete machine?</h3>
@@ -88,6 +145,8 @@
 <div class="dlg">
 <h3>Settings</h3>
 <div class="row"><span>Dark theme</span><button class="sw" id="theme" role="switch" aria-checked="false" aria-label="Dark theme"><span class="k"></span></button></div>
+<label class="field">GitHub service URL<input class="in" id="gh-service" placeholder="https://soil-auth.your-subdomain.workers.dev" autocomplete="off" spellcheck="false"></label>
+<div class="row ghsaverow"><span class="mono" id="gh-service-state">Optional, for private repositories</span><button class="q sm" id="gh-service-save" type="button">Save</button></div>
 <div class="row"><span>Engine</span><span class="mono" id="engine-version">local</span></div>
 <div class="row"><span>Soil home</span><span class="mono" id="soil-home">…</span></div>
 <div class="btns"><button class="q" id="open-home" type="button">Open folder</button><button class="btn wipe" id="close-set">Done</button></div>

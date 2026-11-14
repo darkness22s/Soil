@@ -1023,6 +1023,13 @@ static bool VhDevIoPortLocked(VH_VM *pVm, u16 uPort, bool fWrite, u32 cbWidth, u
             return VhVirtioBlkIo(pVm, (u32)(uPort - uBlkBase), fWrite, cbWidth, puValue);
     }
 
+    /* PCI writable data-disk virtio-blk I/O window */
+    {
+        u16 uBlkBase = VhPciBlkDataIoBase();
+        if (uBlkBase && uPort >= uBlkBase && uPort < (u16)(uBlkBase + 0x40))
+            return VhVirtioBlkDataIo(pVm, (u32)(uPort - uBlkBase), fWrite, cbWidth, puValue);
+    }
+
     /* POST/delay ports */
     if (uPort == 0x80 || uPort == 0xED)
     {
@@ -1075,12 +1082,14 @@ void VhDevInit(VH_VM *pVm)
     VhDevResetState(pVm);
 }
 
-/*
- * Device-model defaults WITHOUT the lock setup: safe to call repeatedly,
- * e.g. after a failed snapshot restore that dumped stale device structs.
- */
 void VhDevResetState(VH_VM *pVm)
 {
+    memset(&pVm->irqs, 0, sizeof(pVm->irqs));
+    memset(&pVm->pit, 0, sizeof(pVm->pit));
+    memset(&pVm->rtc, 0, sizeof(pVm->rtc));
+    memset(&pVm->uart, 0, sizeof(pVm->uart));
+    memset(&pVm->i8042, 0, sizeof(pVm->i8042));
+
     /* PIC: BIOS-ish state - all masked, vector bases 0x08/0x70 until reprogrammed */
     pVm->irqs.pic.master.imr = 0xFF;
     pVm->irqs.pic.slave.imr = 0xFF;
@@ -1113,11 +1122,6 @@ void VhDevResetState(VH_VM *pVm)
     pVm->i8042.statusFlags = 0x04;
 }
 
-/*
- * After a snapshot load the device structs carry data from a previous
- * process lifetime - host-side function pointers must be re-anchored to the
- * live addresses of this process before any guest I/O can happen.
- */
 void VhDevPostRestoreFixup(VH_VM *pVm)
 {
     pVm->uart.pfnOut = uartOutThunk;

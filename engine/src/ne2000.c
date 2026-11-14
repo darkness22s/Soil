@@ -102,7 +102,6 @@ static NE2000State s_ne2k;
 static VH_VM *s_pVmNic;
 static const u8 s_abMac[6] = { 0x52, 0x54, 0x00, 0x12, 0x34, 0x56 };
 
-/* snapshot glue ---------------------------------------------------- */
 int Ne2000SaveState(const u8 **ppb)
 {
     *ppb = (const u8 *)&s_ne2k;

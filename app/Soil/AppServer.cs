@@ -17,6 +17,10 @@ public sealed class AppServer : IDisposable
     private readonly WebApplication m_app;
     private readonly VmManager m_manager;
     private readonly SoilPaths m_paths;
+    private readonly GitHubService m_github;
+    private readonly AppRuntimeManager m_apps;
+    private readonly AgentManager m_agents;
+    private readonly UiStateStore m_ui;
 
     public string Url { get; private set; } = "";
 
@@ -24,6 +28,10 @@ public sealed class AppServer : IDisposable
     {
         m_manager = manager;
         m_paths = paths;
+        m_github = new GitHubService(paths);
+        m_apps = new AppRuntimeManager(manager, paths, m_github);
+        m_agents = new AgentManager(manager);
+        m_ui = new UiStateStore(paths);
 
         var uiRoot = Path.Combine(AppContext.BaseDirectory, "ui");
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -76,10 +84,13 @@ public sealed class AppServer : IDisposable
             await next();
         });
 
-        m_app.UseDefaultFiles(new DefaultFilesOptions
+        var defaultFiles = new DefaultFilesOptions
         {
             FileProvider = new PhysicalFileProvider(uiRoot)
-        });
+        };
+        defaultFiles.DefaultFileNames.Clear();
+        defaultFiles.DefaultFileNames.Add("app.html");
+        m_app.UseDefaultFiles(defaultFiles);
         m_app.UseStaticFiles(new StaticFileOptions
         {
             FileProvider = new PhysicalFileProvider(uiRoot),
@@ -111,10 +122,131 @@ public sealed class AppServer : IDisposable
         m_app.MapGet("/api/info", () => Results.Json(new
         {
             name = "Soil",
-            version = typeof(AppServer).Assembly.GetName().Version?.ToString(3) ?? "0.2.0",
+            version = typeof(AppServer).Assembly.GetName().Version?.ToString(3) ?? "4.2.1",
             home = m_paths.Root,
             schema = 1
         }, JsonOptions.Web));
+
+        m_app.MapGet("/api/ui", () =>
+        {
+            var state = m_ui.Get();
+            if (!state.OnboardingComplete && m_manager.List().Count > 0)
+            {
+                state = m_ui.Update(
+                    new UiStateUpdate(true, null, null, null, null));
+            }
+            return Results.Json(state, JsonOptions.Web);
+        });
+
+        m_app.MapPost("/api/ui", async (HttpRequest req) =>
+        {
+            UiStateUpdate? body;
+            try
+            {
+                body = await JsonSerializer.DeserializeAsync<UiStateUpdate>(
+                    req.Body, JsonOptions.Web);
+            }
+            catch (JsonException)
+            {
+                return Results.BadRequest(new { error = "Invalid JSON." });
+            }
+            if (body is null)
+                return Results.BadRequest(new { error = "UI state is required." });
+            return Results.Json(m_ui.Update(body), JsonOptions.Web);
+        });
+
+        m_app.MapGet("/api/github/status", () =>
+            Results.Json(m_github.Status(), JsonOptions.Web));
+
+        m_app.MapPost("/api/github/config", async (HttpRequest req) =>
+        {
+            GitHubConfigRequest? body;
+            try
+            {
+                body = await JsonSerializer.DeserializeAsync<GitHubConfigRequest>(
+                    req.Body, JsonOptions.Web);
+            }
+            catch (JsonException)
+            {
+                return Results.BadRequest(new { error = "Invalid JSON." });
+            }
+            try
+            {
+                return Results.Json(m_github.SetWorkerUrl(body?.WorkerUrl), JsonOptions.Web);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        });
+
+        m_app.MapPost("/api/github/connect", () =>
+            Results.Json(m_github.BeginConnect(), JsonOptions.Web));
+
+        m_app.MapGet("/api/github/repos", async (CancellationToken ct) =>
+        {
+            try
+            {
+                return Results.Json(await m_github.ListReposAsync(ct), JsonOptions.Web);
+            }
+            catch (Exception ex)
+            {
+                return GitHubError(ex);
+            }
+        });
+
+        m_app.MapPost("/api/github/disconnect", async (CancellationToken ct) =>
+        {
+            await m_github.DisconnectAsync(ct);
+            return Results.Json(m_github.Status(), JsonOptions.Web);
+        });
+
+        m_app.MapPost("/api/apps", async (HttpRequest req) =>
+        {
+            AppImportRequest? body;
+            try
+            {
+                body = await JsonSerializer.DeserializeAsync<AppImportRequest>(
+                    req.Body, JsonOptions.Web);
+            }
+            catch (JsonException)
+            {
+                return Results.BadRequest(new { error = "Invalid JSON." });
+            }
+            if (body is null)
+                return Results.BadRequest(new { error = "Repository details are required." });
+            try
+            {
+                var dto = m_apps.CreateApp(body);
+                return Results.Json(dto, JsonOptions.Web);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        });
+
+        m_app.MapPost("/api/agents", async (HttpRequest req) =>
+        {
+            CreateAgentRequest? body;
+            try
+            {
+                body = await JsonSerializer.DeserializeAsync<CreateAgentRequest>(
+                    req.Body, JsonOptions.Web);
+            }
+            catch (JsonException)
+            {
+                return Results.BadRequest(new { error = "Invalid JSON." });
+            }
+            if (body is null || string.IsNullOrWhiteSpace(body.Name))
+                return Results.BadRequest(new { error = "A name is required." });
+            var dto = m_manager.CreateAgent(body.Name.Trim());
+            return Results.Json(dto, JsonOptions.Web);
+        });
 
         m_app.MapGet("/api/vms", () => Results.Json(m_manager.List(), JsonOptions.Web));
 
@@ -138,18 +270,38 @@ public sealed class AppServer : IDisposable
 
         m_app.MapPost("/api/vms/{id}/start", (string id) =>
         {
-            var dto = m_manager.Start(id);
+            var isAgent = string.Equals(
+                m_manager.FindRecord(id)?.Kind, "agent", StringComparison.OrdinalIgnoreCase);
+            var dto = isAgent ? m_agents.RequestStart(id) : m_apps.RequestStart(id);
             return dto is null ? Results.NotFound() : Results.Json(dto, JsonOptions.Web);
         });
 
         m_app.MapPost("/api/vms/{id}/stop", (string id) =>
         {
-            var dto = m_manager.Stop(id);
+            var isAgent = string.Equals(
+                m_manager.FindRecord(id)?.Kind, "agent", StringComparison.OrdinalIgnoreCase);
+            var dto = isAgent ? m_agents.RequestStop(id) : m_apps.RequestStop(id);
             return dto is null ? Results.NotFound() : Results.Json(dto, JsonOptions.Web);
+        });
+
+        m_app.MapPost("/api/vms/{id}/terminal", (string id) =>
+        {
+            var record = m_manager.FindRecord(id);
+            if (record is null ||
+                !string.Equals(record.Kind, "agent", StringComparison.OrdinalIgnoreCase))
+                return Results.NotFound();
+            return m_agents.OpenTerminal(id)
+                ? Results.NoContent()
+                : Results.Conflict(new { error = "The SSH tunnel is not ready." });
         });
 
         m_app.MapDelete("/api/vms/{id}", (string id) =>
         {
+            var record = m_manager.FindRecord(id);
+            if (string.Equals(record?.Kind, "agent", StringComparison.OrdinalIgnoreCase))
+                m_agents.Remove(id);
+            else
+                m_apps.Remove(id);
             return m_manager.Delete(id)
                 ? Results.Json(new { id, deleted = true }, JsonOptions.Web)
                 : Results.NotFound();
@@ -281,6 +433,15 @@ public sealed class AppServer : IDisposable
         Process.Start(psi);
     }
 
+    private static IResult GitHubError(Exception ex) => ex switch
+    {
+        ArgumentException or InvalidOperationException =>
+            Results.BadRequest(new { error = ex.Message }),
+        HttpRequestException =>
+            Results.Json(new { error = "The GitHub service could not be reached." }, statusCode: 502),
+        _ => Results.Problem(ex.Message)
+    };
+
     private static IResult FileError(Exception ex) => ex switch
     {
         FileNotFoundException or DirectoryNotFoundException =>
@@ -312,6 +473,21 @@ public sealed class AppServer : IDisposable
         }
         try
         {
+            m_apps.Dispose();
+        }
+        catch
+        {
+        }
+        try
+        {
+            m_agents.Dispose();
+        }
+        catch
+        {
+        }
+        m_github.Dispose();
+        try
+        {
             if (File.Exists(m_paths.CliEndpointPath))
             {
                 using var endpoint = JsonDocument.Parse(File.ReadAllText(m_paths.CliEndpointPath));
@@ -328,6 +504,10 @@ public sealed class AppServer : IDisposable
 }
 
 public sealed record CreateVmRequest(string? Name, string? Size);
+
+public sealed record CreateAgentRequest(string? Name);
+
+public sealed record GitHubConfigRequest(string? WorkerUrl);
 
 internal static class JsonOptions
 {

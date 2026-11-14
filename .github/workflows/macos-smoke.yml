@@ -1,4 +1,5 @@
 name: macOS app smoke test
+# Verify Apple Silicon guest boot and snapshots with real Git LFS images.
 
 on:
   pull_request:

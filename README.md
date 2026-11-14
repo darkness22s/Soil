@@ -57,6 +57,27 @@ On first launch, machines from the legacy `%LOCALAPPDATA%\Boxify` store are
 imported into the new layout. The legacy folder is left in place. User machines
 and files are never removed by an upgrade or uninstall.
 
+## Agent machines
+
+The terminal button beside the machine list creates a 512 MB agent machine with
+Claude Code and Codex CLI baked into the guest image. Start the machine and use
+**Open tunnel** to run `claude` or `codex`. Sign in on first use; the guest home
+lives on a sparse data disk at `%USERPROFILE%\.soil\machines\<id>\data\disk.img`
+and survives stops and restarts; the system image stays read-only. Sign-in pages
+open in the machine's built-in browser.
+
+## Build cache
+
+Imported static apps are cached under `~/.soil/cache/builds` by source archive
+hash, project path, build commands, and toolchain. Entries are immutable and can
+be deleted at any time. A local warm workspace under `~/.soil/cache/workspaces`
+keeps installed dependencies for repos that are rebuilt repeatedly.
+
+Set `SOIL_BUILD_CACHE` to a shared folder to reuse build outputs across PCs. The
+shared folder must be writable by every Soil instance, and all instances should
+use the same toolchain versions. Set `SOIL_BUILD_CACHE_SALT` to force a separate
+cache namespace when build environments intentionally differ.
+
 ## Build
 
 ```powershell
@@ -64,12 +85,27 @@ and files are never removed by an upgrade or uninstall.
 ```
 
 This publishes the self-contained app to `app\dist\Soil`, copies the VM engine
-and guest images, and builds `app\dist\Soil-4.2.0-x64.msi`. The installer is
+and guest images, and builds `app\dist\Soil-4.2.1-x64.msi`. The installer is
 per-user and runs `Soil.exe --bootstrap` to create the Soil home.
 
 To use different guest images, pass `-ImagesDir <path>` with a folder containing
 `vmlinuz64`, `core2.gz`, and `soil.squashfs`. Without that option, the build
 script checks `app\images`, then the existing local private staging folder.
+
+## GitHub Actions Windows installer
+
+Run `.github/workflows/windows-installer.yml` with **Actions > Build Soil Windows installer > Run workflow**, or push changes to the app, engine, SDK, or workflow. It builds the x64 MSI on a GitHub-hosted Windows runner and publishes it as the `Soil-Windows-x64-installer` workflow artifact (retained for 14 days). The private guest images are stored in Git LFS and checked out by the workflow. MinGW-w64 and WiX 5 are installed during the build.
+
+## GitHub Actions VM smoke test
+
+`.github/workflows/soil-vm-smoke.yml` builds Soil, boots the guest, and checks the
+SSH and MCP-over-SSH host forwards. It is a manual workflow because guest images
+are private and must already be present on the runner. It requires a trusted
+self-hosted Windows x64 runner labeled `soil-whpx`, with Windows Hypervisor
+Platform enabled, .NET 8, and MinGW-w64 installed. Enter the image directory and
+optional `gcc` path when dispatching the workflow. Do not use this runner for
+untrusted pull requests: nested virtualization is not officially supported on
+GitHub-hosted runners, and self-hosted runners share the host's privileges.
 
 ## Run
 

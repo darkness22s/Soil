@@ -15,6 +15,8 @@
 
 #define VH_PCI_BLK_DEVFN        0x10
 #define VH_PCI_BLK_BAR_IO       0xC001u    /* I/O base 0xC000, 0x40-byte window */
+#define VH_PCI_BLK_DATA_DEVFN   0x18
+#define VH_PCI_BLK_DATA_BAR_IO  0xC041u    /* I/O base 0xC040, 0x40-byte window */
 
 static u32 s_uCfgAddr;
 static u16 s_uNicCommand;
@@ -23,6 +25,9 @@ static u16 s_uNicBase;      /* decoded I/O base of the NIC window (0 = off) */
 static u16 s_uBlkCommand;
 static u32 s_uBlkBar;       /* BAR0 as last written (0xFFFFFFC1 while probing) */
 static u16 s_uBlkBase;      /* decoded I/O base of the blk window (0 = off) */
+static u16 s_uBlkDataCommand;
+static u32 s_uBlkDataBar;
+static u16 s_uBlkDataBase;
 
 void VhPciInit(void)
 {
@@ -33,35 +38,42 @@ void VhPciInit(void)
     s_uBlkCommand = 0;
     s_uBlkBar = VH_PCI_BLK_BAR_IO;
     s_uBlkBase = (u16)(VH_PCI_BLK_BAR_IO & 0xFF00);
+    s_uBlkDataCommand = 0;
+    s_uBlkDataBar = VH_PCI_BLK_DATA_BAR_IO;
+    s_uBlkDataBase = (u16)(VH_PCI_BLK_DATA_BAR_IO & 0xFF00);
 }
 
-/* snapshot glue ---------------------------------------------------- */
 u32 VhPciSaveState(const u32 **ppbData)
 {
-    static u32 abOut[8];
-    abOut[0] = s_uCfgAddr;
-    abOut[1] = s_uNicCommand;
-    abOut[2] = s_uNicBar;
-    abOut[3] = s_uNicBase;
-    abOut[4] = s_uBlkCommand;
-    abOut[5] = s_uBlkBar;
-    abOut[6] = s_uBlkBase;
-    abOut[7] = 0;
-    *ppbData = abOut;
-    return 8;
+    static u32 state[10];
+    state[0] = s_uCfgAddr;
+    state[1] = s_uNicCommand;
+    state[2] = s_uNicBar;
+    state[3] = s_uNicBase;
+    state[4] = s_uBlkCommand;
+    state[5] = s_uBlkBar;
+    state[6] = s_uBlkBase;
+    state[7] = s_uBlkDataCommand;
+    state[8] = s_uBlkDataBar;
+    state[9] = s_uBlkDataBase;
+    *ppbData = state;
+    return 10;
 }
 
-void VhPciLoadState(const u32 *pbData, u32 cWords)
+void VhPciLoadState(const u32 *state, u32 count)
 {
-    if (!pbData || cWords < 7)
+    if (!state || count < 10)
         return;
-    s_uCfgAddr = pbData[0];
-    s_uNicCommand = (u16)pbData[1];
-    s_uNicBar = pbData[2];
-    s_uNicBase = (u16)pbData[3];
-    s_uBlkCommand = (u16)pbData[4];
-    s_uBlkBar = pbData[5];
-    s_uBlkBase = (u16)pbData[6];
+    s_uCfgAddr = state[0];
+    s_uNicCommand = (u16)state[1];
+    s_uNicBar = state[2];
+    s_uNicBase = (u16)state[3];
+    s_uBlkCommand = (u16)state[4];
+    s_uBlkBar = state[5];
+    s_uBlkBase = (u16)state[6];
+    s_uBlkDataCommand = (u16)state[7];
+    s_uBlkDataBar = state[8];
+    s_uBlkDataBase = (u16)state[9];
 }
 
 u16 VhPciNicIoBase(void)
@@ -72,6 +84,11 @@ u16 VhPciNicIoBase(void)
 u16 VhPciBlkIoBase(void)
 {
     return VhVirtioBlkPresent() ? s_uBlkBase : 0;
+}
+
+u16 VhPciBlkDataIoBase(void)
+{
+    return VhVirtioBlkDataPresent() ? s_uBlkDataBase : 0;
 }
 
 static u32 pciNicRead(u8 bReg)
@@ -138,6 +155,50 @@ static void pciBlkWrite(u8 bReg, u32 uValue)
         {
             s_uBlkBar = uValue & 0xFFFFFFC1u;
             s_uBlkBase = (u16)(uValue & 0xFFFFFFC0u);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+static u32 pciBlkDataRead(u8 bReg)
+{
+    switch (bReg & 0xFC)
+    {
+    case 0x00: return 0x10011AF4u;                       /* 1AF4:1001 (legacy virtio-blk) */
+    case 0x04: return (u32)s_uBlkDataCommand | 0x02000000u;
+    case 0x08: return 0x01800000u;
+    case 0x0C: return 0x00000000u;
+    case 0x10: return s_uBlkDataBar;
+    case 0x2C: return 0x00021AF4u;
+    case 0x3C: return (u32)VH_VBLK_DATA_IRQ | 0x0100u;
+    default:   return 0;
+    }
+}
+
+static void pciBlkDataWrite(u8 bReg, u32 uValue)
+{
+    switch (bReg & 0xFC)
+    {
+    case 0x04:
+        s_uBlkDataCommand = (u16)uValue;
+        break;
+    case 0x10:
+        if ((uValue & 0xFFFFFFC0u) == 0xFFFFFFC0u)
+        {
+            s_uBlkDataBar = 0xFFFFFFC1u;
+            s_uBlkDataBase = 0;
+        }
+        else if ((uValue & 0xFFFFFFC0u) == 0)
+        {
+            s_uBlkDataBar = 0;
+            s_uBlkDataBase = 0;
+        }
+        else
+        {
+            s_uBlkDataBar = uValue & 0xFFFFFFC1u;
+            s_uBlkDataBase = (u16)(uValue & 0xFFFFFFC0u);
         }
         break;
     default:
@@ -217,7 +278,9 @@ bool VhPciIo(VH_VM *pVm, u16 uPort, bool fWrite, u32 cbWidth, u32 *puValue)
         bDevFn = (u8)((s_uCfgAddr >> 8) & 0xFF);
         bReg = (u8)(s_uCfgAddr & 0xFC);
 
-        if (bBus != 0 || (bDevFn != 0x00 && bDevFn != VH_PCI_NIC_DEVFN && bDevFn != VH_PCI_BLK_DEVFN))
+        if (bBus != 0 ||
+            (bDevFn != 0x00 && bDevFn != VH_PCI_NIC_DEVFN &&
+             bDevFn != VH_PCI_BLK_DEVFN && bDevFn != VH_PCI_BLK_DATA_DEVFN))
         {
             /* no device on this bus: reads return all ones, writes ignored */
             if (!fWrite)
@@ -228,6 +291,13 @@ bool VhPciIo(VH_VM *pVm, u16 uPort, bool fWrite, u32 cbWidth, u32 *puValue)
         if (bDevFn == VH_PCI_BLK_DEVFN && !VhVirtioBlkPresent())
         {
             /* no disk attached: hide the device entirely */
+            if (!fWrite)
+                *puValue = uMask;
+            return true;
+        }
+
+        if (bDevFn == VH_PCI_BLK_DATA_DEVFN && !VhVirtioBlkDataPresent())
+        {
             if (!fWrite)
                 *puValue = uMask;
             return true;
@@ -257,6 +327,21 @@ bool VhPciIo(VH_VM *pVm, u16 uPort, bool fWrite, u32 cbWidth, u32 *puValue)
                     pciBlkWrite(bReg, *puValue);
                 else
                     pciBlkWrite(bReg, (uVal & ~(uMask << uShift)) | ((*puValue & uMask) << uShift));
+            }
+            else
+            {
+                *puValue = (uVal >> uShift) & uMask;
+            }
+        }
+        else if (bDevFn == VH_PCI_BLK_DATA_DEVFN)
+        {
+            uVal = pciBlkDataRead(bReg);
+            if (fWrite)
+            {
+                if (cbWidth == 4)
+                    pciBlkDataWrite(bReg, *puValue);
+                else
+                    pciBlkDataWrite(bReg, (uVal & ~(uMask << uShift)) | ((*puValue & uMask) << uShift));
             }
             else
             {

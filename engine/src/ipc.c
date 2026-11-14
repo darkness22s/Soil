@@ -2,7 +2,7 @@
  * Soil VM engine - host IPC transport for the Soil app.
  *
  * Two channels, both keyed by a caller-supplied token:
- *   Local\SoilFb_<token>     shared framebuffer (header + 1024x768 BGRA)
+ *   Local\SoilFb_<token>     shared framebuffer (header + 1360x768 BGRA)
  *   \\.\pipe\SoilInput_<token> input messages (fixed 16-byte records)
  *
  * The app runs vmhost with --no-ui --ipc <token>; this module then owns the
@@ -148,8 +148,8 @@ static unsigned __stdcall VhIpcInputThread(void *pvArg)
 static unsigned __stdcall VhIpcFrameThread(void *pvArg)
 {
     VH_VM *pVm = (VH_VM *)pvArg;
-    int fSnapPendAck = 0;           /* requested; waiting for the run loop */
-    u64 nsSnapWait = 0;
+    int snapPendingAck = 0;
+    u64 snapWaitStart = 0;
 
     while (!pVm->fStop)
     {
@@ -161,54 +161,35 @@ static unsigned __stdcall VhIpcFrameThread(void *pvArg)
             break;
         }
 
-        if (g_pSh && pVm->fSnapWorking)
+        if (g_pSh && !snapPendingAck &&
+            InterlockedCompareExchange(&g_pSh->uCmd, 0, 1) == 1)
         {
-            /* device state is frozen; skip frame copies for now */
-            Sleep(10);
-            continue;
-        }
-
-        /* snapshot request: latch the path, ask the run loop to park, ack
-           once the save has finished (or on an absurd stall) */
-        if (g_pSh && g_pSh->uCmd == 1 && !fSnapPendAck)
-        {
-            char szPath[sizeof(g_pSh->szCmd)];
-            memcpy(szPath, g_pSh->szCmd, sizeof(szPath));
-            szPath[sizeof(szPath) - 1] = '\0';
-            if (szPath[0])
+            LONG cbPath = InterlockedCompareExchange(&g_pSh->cCmdHave, 0, 0);
+            if (cbPath > 0 && cbPath < (LONG)sizeof(pVm->szSnapPath) &&
+                g_pSh->szCmd[cbPath] == '\0')
             {
-                memcpy(pVm->szSnapPath, szPath, sizeof(pVm->szSnapPath));
+                memcpy(pVm->szSnapPath, g_pSh->szCmd, (size_t)cbPath + 1);
                 pVm->fSnapWanted = true;
-                VhWhvCancelRun(pVm);
-                fSnapPendAck = 1;
-                nsSnapWait = VhGuestNowNs();
-                VhLog("ipc: snapshot requested at '%s'", szPath);
+                snapPendingAck = 1;
+                snapWaitStart = VhGuestNowNs();
             }
-            g_pSh->uCmd = 0;        /* consumed; ack = 2 comes later */
+            else
+                InterlockedExchange(&g_pSh->uCmd, 0);
         }
-
-        if (fSnapPendAck && !pVm->fSnapWanted && !pVm->fSnapWorking)
+        if (g_pSh && snapPendingAck && !pVm->fSnapWanted && !pVm->fSnapWorking)
         {
-            g_pSh->uCmd = 2;        /* done (success or not) */
-            fSnapPendAck = 0;
+            InterlockedExchange(&g_pSh->uCmd, 2);
+            snapPendingAck = 0;
         }
-        else if (fSnapPendAck && VhGuestNowNs() - nsSnapWait > 120000000000ull)
-        {
-            VhLog("ipc: snapshot wait timed out - acking anyway");
-            g_pSh->uCmd = 2;
-            fSnapPendAck = 0;
-        }
+        (void)snapWaitStart;
 
-        if (g_pSh && pVm->mem.pbRam && pVm->mem.gpaFb && !fSnapPendAck)
+        if (g_pSh && pVm->mem.pbRam && pVm->mem.gpaFb)
         {
             VhFbSnapshot(pVm, g_pSh->abFrame);
             InterlockedIncrement((volatile LONG *)&g_pSh->uSeq);
         }
         Sleep(66);
     }
-
-    if (fSnapPendAck && g_pSh)
-        g_pSh->uCmd = 2;
     return 0;
 }
 

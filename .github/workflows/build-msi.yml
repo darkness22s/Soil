@@ -53,8 +53,8 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: Soil-4.2.0-x64
-          path: app/dist/Soil-4.2.0-x64.msi
+          name: Soil-4.2.1-x64
+          path: app/dist/Soil-4.2.1-x64.msi
           if-no-files-found: error
           retention-days: 30
 

@@ -18,6 +18,7 @@
 *.iso
 *.squashfs
 *.gz
+app/images/vmlinuz64
 *.tar
 *.tar.gz
 *.zip
@@ -42,6 +43,11 @@ t3code-soil/
 Virtualization system/
 milestones/
 iso/
+
+# Cloudflare Worker local files
+app/auth-worker/node_modules/
+app/auth-worker/.wrangler/
+app/auth-worker/.dev.vars
 
 # Windows/macOS/Linux local files
 Thumbs.db
