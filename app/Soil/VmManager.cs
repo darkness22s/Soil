@@ -1592,7 +1592,11 @@ public sealed class VmManager
             key = m_sshKeyPath;
         }
 
-        if (port <= 0 || string.IsNullOrWhiteSpace(key) || !File.Exists(key))
+        // A desktop viewer can begin as soon as the guest actually paints
+        // pixels. SSH probing is slower and may block on desktop processes
+        // unrelated to rendering; keep that stronger gate for agent/app jobs.
+        if (string.Equals(runtime.Record.Kind, "desktop", StringComparison.OrdinalIgnoreCase) ||
+            (port <= 0 || string.IsNullOrWhiteSpace(key) || !File.Exists(key)))
         {
             var boot = Stopwatch.StartNew();
             while (boot.Elapsed < TimeSpan.FromSeconds(90))
