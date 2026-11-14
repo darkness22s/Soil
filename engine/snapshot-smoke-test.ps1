@@ -2,6 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ImagesDir,
     [int]$BootTimeoutSeconds = 180,
+    [string]$KernelCmdLine = "console=ttyS0 quiet loglevel=3 acpi=off noapic nolapic mitigations=off nozswap",
     [switch]$SkipBuild
 )
 
@@ -57,7 +58,7 @@ function Start-Guest([string]$logPath, [string]$restorePath) {
         "--kernel", (Join-Path $images "vmlinuz64"),
         "--initrd", (Join-Path $images "core2.gz"),
         "--disk", (Join-Path $images "soil.squashfs"),
-        "--ram", "512", "--no-ui", "--ipc", $script:token,
+        "--ram", "512", "--cmdline", $KernelCmdLine, "--no-ui", "--ipc", $script:token,
         "--log", $logPath,
         "--ssh-port", $script:sshPort.ToString(),
         "--mcp-port", $mcpPort.ToString(),
@@ -78,7 +79,7 @@ function Start-Guest([string]$logPath, [string]$restorePath) {
             Write-Host ("SSH guest-ready after {0:N1} ms" -f $script:clock.Elapsed.TotalMilliseconds)
             return
         }
-        Start-Sleep -Milliseconds 250
+        Start-Sleep -Milliseconds 30
     }
     throw "Timed out awaiting an actual SSH banner from guest."
 }
