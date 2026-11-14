@@ -1,0 +1,49 @@
+name: Soil experimental WHPX runtime verification
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'engine/**'
+      - 'app/Soil/**'
+      - '.github/workflows/whpx-runtime-verification.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-guest-snapshot:
+    # GitHub-hosted nested virtualization is not guaranteed. This job is an
+    # experimental real-guest probe, not a substitute for self-hosted WHPX.
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Check out VM source and full LFS guest images
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+      - name: Inspect Windows virtualization environment
+        shell: pwsh
+        run: |
+          Write-Host "Windows edition and build:"
+          Get-CimInstance Win32_OperatingSystem |
+            Select-Object Caption, Version, BuildNumber | Format-List
+          Write-Host "Hypervisor and firmware virtualization flags:"
+          Get-CimInstance Win32_ComputerSystem |
+            Select-Object HypervisorPresent | Format-List
+          Get-CimInstance Win32_Processor |
+            Select-Object VMMonitorModeExtensions, VirtualizationFirmwareEnabled,
+                          SecondLevelAddressTranslationExtensions | Format-List
+          $feature = Get-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -ErrorAction SilentlyContinue
+          Write-Host "Windows Hypervisor Platform: $($feature.State)"
+      - name: Install MinGW-w64 compiler
+        uses: bwoodsend/setup-winlibs-action@v1
+      - name: Build native vmhost
+        shell: pwsh
+        run: |
+          .\engine\build.ps1 -Gcc (Get-Command gcc).Source
+          if ($LASTEXITCODE -ne 0) { throw 'VM engine build failed' }
+      - name: Boot real guest, snapshot, verify full exit, and restore
+        shell: pwsh
+        run: .\engine\snapshot-smoke-test.ps1 -ImagesDir .\app\images -SkipBuild -BootTimeoutSeconds 120
