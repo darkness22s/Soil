@@ -339,7 +339,6 @@ static bool VhHandleStringIo(VH_VM *pVm, const WHV_RUN_VP_EXIT_CONTEXT *pExit)
     u64 uOffset = fWrite ? pIo->Rsi : pIo->Rdi;
     i64 lStep;
     u64 k;
-    u64 uGpa0 = 0;
 
     if (s_cStrTrace < 48)
     {
@@ -375,8 +374,6 @@ static bool VhHandleStringIo(VH_VM *pVm, const WHV_RUN_VP_EXIT_CONTEXT *pExit)
                   (unsigned long long)k, (unsigned long long)uGva);
             break;
         }
-        if (k == 0)
-            uGpa0 = uGpa;
         if (uGpa + cbWidth > pVm->mem.cbRam)
         {
             VhLog("strio: gpa OOB at iter %llu gpa=%#llx", (unsigned long long)k,
@@ -397,10 +394,6 @@ static bool VhHandleStringIo(VH_VM *pVm, const WHV_RUN_VP_EXIT_CONTEXT *pExit)
         uOffset += (u64)lStep;
     }
 
-    if (uPort == 0x310)
-        VhLog("strio end: port=%#x iters=%llu of %llu gpa0=%#llx",
-              uPort, (unsigned long long)k, (unsigned long long)cCount,
-              (unsigned long long)uGpa0);
 
     {
         WHV_REGISTER_NAME aenm[4] = { WHvX64RegisterRip, WHvX64RegisterRsi,
