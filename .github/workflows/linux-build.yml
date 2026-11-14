@@ -31,11 +31,21 @@ jobs:
 
       - name: Compile Python and validate browser adapter
         run: |
-          python3 -m py_compile app/linux/soil.py app/linux/tests/test_soil.py
+          python3 -m py_compile app/linux/soil.py app/linux/installer_iso.py app/linux/tests/test_soil.py app/linux/tests/test_installer_iso_e2e.py
           node --check app/linux/linux-ui.js
 
       - name: Unit tests (API, persistence, mocked QEMU lifecycle)
         run: python3 -m unittest discover -s app/linux/tests -v
+
+      - name: Install real ISO boot test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qemu-system-x86 qemu-utils novnc websockify grub-pc-bin grub-common xorriso mtools
+
+      - name: Boot actual GRUB ISO in a QEMU VM and verify serial guest execution
+        env:
+          SOIL_ISO_E2E: "1"
+        run: python3 -m unittest discover -s app/linux/tests -p test_installer_iso_e2e.py -v
 
       - name: Package Linux application
         run: |
@@ -43,6 +53,7 @@ jobs:
           test -s app/linux/dist/Soil-Linux-x86_64.tar.gz
           tar -tzf app/linux/dist/Soil-Linux-x86_64.tar.gz | grep -q 'Soil-Linux/ui/app.html'
           tar -tzf app/linux/dist/Soil-Linux-x86_64.tar.gz | grep -q 'Soil-Linux/soil.py'
+          tar -tzf app/linux/dist/Soil-Linux-x86_64.tar.gz | grep -q 'Soil-Linux/installer_iso.py'
 
       - name: Start packaged host and verify HTTP
         shell: bash
