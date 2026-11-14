@@ -808,24 +808,27 @@ int main(int argc, char *argv[])
     if (pszRestore)
     {
         if (!VhSnapRestore(pVm, pszRestore, &snapRefs))
-        {
-            fRestored = true;
-            VhDevPostRestoreFixup(pVm);
-            Ne2000BindVm(pVm);
-        }
+            fRestored = true; /* restore already fixed up device callbacks */
         else
             VhLog("vmhost: snapshot restore failed; performing clean boot");
     }
     if (!fRestored)
     {
-        /* A rejected snapshot may have mapped a few lazy chunks already.
-           Reset the guest address space before doing a normal cold boot. */
+        /* A bad/incompatible checkpoint may have loaded partial registers,
+           device state and lazy pages. Recreate the partition (rather than
+           unmapping a sparse GPA range) before starting a clean guest. */
         if (pszRestore)
         {
-            HRESULT unmap = WHvUnmapGpaRange(pVm->hPartition, 0, pVm->mem.cbRam);
-            if (FAILED(unmap) || VhWhvMapRam(pVm))
+            for (u32 i = 0; i < g_cDynMmioPages; i++)
+                VirtualFree(g_aDynMmio[i].pvPage, 0, MEM_RELEASE);
+            g_cDynMmioPages = 0;
+            VhWhvTerm(pVm);
+            memset(pVm->mem.pbRam, 0, (size_t)pVm->mem.cbRam);
+            memset(pVm->mem.pbScratch, 0, (size_t)pVm->mem.cbScratch);
+            VhDevResetState(pVm);
+            if (VhWhvInit(pVm, 1) || VhWhvMapRam(pVm) || VhWhvCreateCpu(pVm))
             {
-                VhLog("vmhost: could not remap guest RAM for cold boot");
+                VhLog("vmhost: could not reset partition for cold boot");
                 return 1;
             }
         }
