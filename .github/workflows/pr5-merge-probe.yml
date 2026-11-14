@@ -1,4 +1,5 @@
 name: PR 5 integration conflict probe
+# Recheck against main after PRs 3 and 4 merged
 
 on:
   push:
