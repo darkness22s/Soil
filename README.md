@@ -88,8 +88,10 @@ A one-shot in-use checkpoint is never replayed after a VM crash, because a
 disk might have changed since that snapshot.
 
 Interactive desktop VMs also **park automatically after 90 seconds with the
-Soil window minimized or unfocused**. Refocusing Soil does not wake them:
-press Start to recall the VM. Active app imports and AI-agent workers are
+Soil window minimized or unfocused**, or after 90 seconds without an active
+VM viewer or input request (for example, a VM left unselected while working
+elsewhere in Soil). Refocusing Soil does not wake them: press Start to recall
+the VM. Active app imports and AI-agent workers are
 excluded from automatic focus-based parking because their ongoing background
 work must not be silently interrupted; their Stop control still checkpoints
 and releases the VM. Closing Soil stops all remaining VMs.
