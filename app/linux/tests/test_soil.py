@@ -108,7 +108,7 @@ class LinuxHostTests(unittest.TestCase):
                     booted = self.host.start(mid)
                     self.assertEqual(booted["status"], "running")
                     self.assertFalse(booted["installer"]["bootNext"])
-                    args = popen.call_args_list[0].args[0]
+                    args = next(call.args[0] for call in popen.call_args_list if "qemu-system-x86_64" in call.args[0][0])
                     self.assertIn("once=d,order=c,menu=on", args)
                     self.assertIn(str(self.host._installer_path(mid)), " ".join(args))
                     self.assertNotIn("-kernel", args)
@@ -116,8 +116,8 @@ class LinuxHostTests(unittest.TestCase):
                 self.assertEqual(self.host.stop(mid)["status"], "stopped")
                 with mock.patch.object(soil.subprocess, "Popen", wraps=soil.subprocess.Popen) as popen:
                     self.host.start(mid)
-                    self.assertIn("order=c,menu=on", popen.call_args_list[0].args[0])
-                    self.assertNotIn("once=d,order=c,menu=on", popen.call_args_list[0].args[0])
+                    self.assertIn("order=c,menu=on", next(call.args[0] for call in popen.call_args_list if "qemu-system-x86_64" in call.args[0][0]))
+                    self.assertNotIn("once=d,order=c,menu=on", next(call.args[0] for call in popen.call_args_list if "qemu-system-x86_64" in call.args[0][0]))
                 self.assertEqual(self.host.stop(mid)["status"], "stopped")
 
     def test_missing_dependencies_fails_before_process_launch(self):
