@@ -1,3 +1,4 @@
 app/images/core2.gz filter=lfs diff=lfs merge=lfs -text
 app/images/soil.squashfs filter=lfs diff=lfs merge=lfs -text
 app/images/vmlinuz64 filter=lfs diff=lfs merge=lfs -text
+soil-sdk/runtime/soil-native text eol=lf
