@@ -12,7 +12,7 @@ On Ubuntu or Debian:
 
 ```sh
 sudo apt update
-sudo apt install python3 qemu-system-x86 qemu-utils novnc websockify
+sudo apt install python3 python3-pip qemu-system-x86 qemu-utils novnc websockify
 ```
 
 Run from the source checkout:
@@ -81,3 +81,43 @@ builds a `Soil-Linux-x86_64.tar.gz` artifact and launches the host with a
 health check on an Ubuntu runner. The stub-QEMU unit test checks process
 management, *not* actual guest boot. A true guest-boot test requires the private
 Git LFS images and a suitable virtualization-capable runner.
+
+## Agent computer-use API (Linux VMs)
+
+On-demand computer control uses the preexisting MIT-licensed [vncdotool]
+(https://github.com/sibson/vncdotool) VNC/RFB automation library, bundled in
+the Linux tarball. The `vncdotool` CLI is started only for the duration of an
+API request. The app creates no VM or automation process until requested.
+
+The app binds its API to 127.0.0.1. For **computer use** it additionally
+requires the per-install capability token in `~/.soil/keys/computer-use.token`
+(mode 0600). Never put this token in a public log or share the API port.
+
+With Soil running, take the `http://127.0.0.1:PORT` URL printed by the launcher.
+Use the VM ID from `GET /api/vms`. A VM must already be running.
+
+```sh
+BASE=http://127.0.0.1:PORT   # Replace PORT with Soil's printed port
+VM_ID=your-32-character-vm-id
+TOKEN=$(cat ~/.soil/keys/computer-use.token)
+curl -f -H "Authorization: Bearer $TOKEN" \
+  "$BASE/api/vms/$VM_ID/computer/screenshot" -o screen.png
+curl -f -X POST -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"action":"click","x":250,"y":150,"button":"left"}' \
+  "$BASE/api/vms/$VM_ID/computer/action"
+curl -f -X POST -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"action":"type","text":"Hello, VM!"}' \
+  "$BASE/api/vms/$VM_ID/computer/action"
+```
+
+Supported JSON actions: `click`, `double_click`, `move`, `scroll` (absolute
+`x`, `y` screenshot pixels), `type` (`text`), and `key` (`key`, including
+`enter` and shortcuts such as `ctrl-c`). Screenshot returns PNG. Calls against
+stopped VMs return 409 and do **not** wake them. Agents should request
+a screenshot after acting and verify the intended result.
+
+Builds vendor `vncdotool==1.4.2` with dependencies and licenses into the tarball.
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The browser's ordinary
+noVNC console continues to work independently of the agent API.

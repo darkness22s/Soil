@@ -8,7 +8,9 @@ as system packages. No VM is started automatically on launch.
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
+import secrets
 import mimetypes
 import os
 import shutil
@@ -25,6 +27,11 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
+
+try:
+    from .computer_use import ComputerUseError, perform as computer_perform, screenshot as computer_screenshot
+except ImportError:  # Direct execution via python3 soil.py or packaged launcher
+    from computer_use import ComputerUseError, perform as computer_perform, screenshot as computer_screenshot
 
 HERE = Path(__file__).resolve().parent
 UI_DIR = HERE / "ui" if (HERE / "ui" / "app.html").is_file() else HERE.parent / "Soil" / "ui"
@@ -84,6 +91,7 @@ class LinuxHost:
         self.lock = threading.RLock()
         for name in ("machines", "images", "apps", "skills", "cache", "logs", "keys"):
             (self.home / name).mkdir(parents=True, exist_ok=True)
+        self.computer_token = self._computer_token()
         self.machines: dict[str, dict] = {}
         self.running: dict[str, dict] = {}
         if self.index.exists():
@@ -93,6 +101,34 @@ class LinuxHost:
                         self.machines[item["id"]] = item
             except (ValueError, OSError, TypeError) as exc:
                 raise SoilError("Could not read existing machines.json: " + str(exc)) from exc
+
+    def _computer_token(self) -> str:
+        path = self.home / "keys" / "computer-use.token"
+        if path.is_symlink():
+            raise SoilError("Refusing a symlinked computer-use token.")
+        try:
+            descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            pass
+        else:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                stream.write(secrets.token_urlsafe(32) + "\n")
+        if path.is_symlink():
+            raise SoilError("Refusing a symlinked computer-use token.")
+        os.chmod(path, 0o600)
+        token = path.read_text(encoding="utf-8").strip()
+        if len(token) < 32:
+            raise SoilError("Invalid computer-use token.")
+        return token
+
+    def computer_port(self, mid: str) -> int:
+        with self.lock:
+            if mid not in self.machines:
+                raise ComputerUseError(404, "Machine not found.")
+            runtime = self.running.get(mid)
+            if runtime is None or runtime["qemu"].poll() is not None:
+                raise ComputerUseError(409, "Start the VM before computer use.")
+            return int(runtime["vnc_port"])
 
     @staticmethod
     def safe_id(value: object) -> bool:
@@ -280,7 +316,8 @@ class LinuxHost:
                     raise SoilError("websockify could not start; inspect " + str(folder / "logs" / "vm.log"))
                 self.running[mid] = {
                     "qemu": qproc, "websockify": webproc,
-                    "websocket_port": websocket_port, "monitor": monitor,
+                    "websocket_port": websocket_port, "vnc_port": 5900 + display,
+                    "monitor": monitor,
                     "started": time.monotonic(), "temporary": temporary, "log": log,
                 }
                 return self._dto(machine)
@@ -427,6 +464,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(payload)
 
+    def _computer_authorized(self) -> bool:
+        expected = "Bearer " + self.server.host.computer_token
+        if not hmac.compare_digest(self.headers.get("Authorization", ""), expected):
+            self._send(401, {"error": "Valid computer-use Bearer token required."})
+            return False
+        return True
+
     def _json_body(self) -> dict:
         if self.headers.get("Content-Type", "").split(";")[0].strip().lower() != "application/json":
             raise SoilError("Expected application/json.")
@@ -471,6 +515,11 @@ class Handler(BaseHTTPRequestHandler):
                 if path == "/api/github/repos":
                     return self._send(501, {"error": "GitHub imports are not yet supported on Linux."})
                 parts = path.strip("/").split("/")
+                if (len(parts) == 5 and parts[:2] == ["api", "vms"] and
+                        parts[3:] == ["computer", "screenshot"] and host.safe_id(parts[2])):
+                    if not self._computer_authorized():
+                        return
+                    return self._send(200, computer_screenshot(host.computer_port(parts[2])), "image/png")
                 if len(parts) == 4 and parts[:2] == ["api", "vms"]:
                     mid, action = parts[2:]
                     if not host.safe_id(mid) or not host.get(mid):
@@ -482,7 +531,15 @@ class Handler(BaseHTTPRequestHandler):
                         return self._send(404, {"error": "Linux uses the noVNC console."})
                 return self._static(path)
             if self.command == "POST":
+                parts = path.strip("/").split("/")
+                computer_action = (len(parts) == 5 and parts[:2] == ["api", "vms"] and
+                                   parts[3:] == ["computer", "action"] and host.safe_id(parts[2]))
+                if computer_action and not self._computer_authorized():
+                    return
                 body = self._json_body()
+                if computer_action:
+                    computer_perform(host.computer_port(parts[2]), body)
+                    return self._send(200, {"ok": True})
                 if path == "/api/ui":
                     self.server.ui_state.update({k: body[k] for k in ("purpose", "agents", "package", "theme")
                                                  if k in body})
@@ -514,6 +571,8 @@ class Handler(BaseHTTPRequestHandler):
                         return self._send(200, {"id": parts[2], "deleted": True})
                 return self._send(404, {"error": "Machine not found."})
             return self._send(405, {"error": "Method not allowed."})
+        except ComputerUseError as exc:
+            return self._send(exc.status, {"error": str(exc)})
         except SoilError as exc:
             return self._send(400, {"error": str(exc)})
         except (OSError, subprocess.SubprocessError) as exc:

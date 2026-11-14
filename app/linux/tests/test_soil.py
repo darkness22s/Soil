@@ -86,6 +86,35 @@ class LinuxHostTests(unittest.TestCase):
                 self.assertFalse(self.host.running)
 
 
+    def test_computer_use_token_created_private(self):
+        token = self.host.home / "keys" / "computer-use.token"
+        self.assertTrue(token.is_file())
+        self.assertEqual(token.stat().st_mode & 0o077, 0)
+        self.assertEqual(self.host.computer_token, soil.LinuxHost(self.home).computer_token)
+
+    def test_computer_use_action_uses_upstream_vncdo(self):
+        from app.linux import computer_use
+        commands = computer_use.action_command({
+            "action": "click", "x": 300, "y": 250, "button": "right"
+        })
+        self.assertEqual(commands, ["move", "300", "250", "click", "3"])
+        self.assertEqual(computer_use.action_command(
+            {"action": "key", "key": "ctrl-c"}), ["key", "ctrl-c"])
+        with self.assertRaises(computer_use.ComputerUseError):
+            computer_use.action_command({"action": "click", "x": -1, "y": 2})
+        with self.assertRaises(computer_use.ComputerUseError):
+            computer_use.action_command({"action": "type", "text": ""})
+        with mock.patch.object(computer_use.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            computer_use.perform(5993, {"action": "type", "text": "hi"})
+            argv = run.call_args.args[0]
+            self.assertIn("vncdotool.command", argv)
+            self.assertIn("127.0.0.1::5993", argv)
+            self.assertEqual(argv[-2:], ["type", "hi"])
+            self.assertFalse(run.call_args.kwargs.get("shell", False))
+            self.assertEqual(run.call_args.kwargs["timeout"], 12)
+
+
 class ServerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -146,6 +175,49 @@ class ServerTests(unittest.TestCase):
         self.assertIn("desktop", json.loads(data)["error"])
         status, data = self.request("GET", "/api/github/repos")
         self.assertEqual(status, 501)
+
+
+    def test_computer_use_requires_token_and_running_vm(self):
+        from app.linux import computer_use
+        vm = self.host.create("Agent VM", "tiny")
+        mid = vm["id"]
+        screenshot_url = "/api/vms/" + mid + "/computer/screenshot"
+        action_url = "/api/vms/" + mid + "/computer/action"
+        status, _ = self.request("GET", screenshot_url)
+        self.assertEqual(status, 401)
+        status, _ = self.request("POST", action_url, {"action": "click", "x": 1, "y": 2})
+        self.assertEqual(status, 401)
+        headers = {"Authorization": "Bearer " + self.host.computer_token}
+        status, _ = self.request("GET", screenshot_url, headers=headers)
+        self.assertEqual(status, 409)
+        status, _ = self.request("POST", action_url, {"action": "type", "text": "hi"}, headers)
+        self.assertEqual(status, 409)
+        self.assertFalse(self.host.running)
+
+        class FakeProc:
+            def poll(self):
+                return None
+        self.host.running[mid] = {"qemu": FakeProc(), "vnc_port": 5999}
+        try:
+            image = b"\x89PNG\r\n\x1a\n" + b"fake png"
+            with mock.patch.object(soil, "computer_screenshot", return_value=image) as capture:
+                status, data = self.request("GET", screenshot_url, headers=headers)
+                self.assertEqual(status, 200)
+                self.assertEqual(data, image)
+                capture.assert_called_once_with(5999)
+            with mock.patch.object(soil, "computer_perform") as act:
+                status, data = self.request("POST", action_url,
+                                            {"action": "click", "x": 10, "y": 20}, headers)
+                self.assertEqual(status, 200)
+                self.assertTrue(json.loads(data)["ok"])
+                act.assert_called_once_with(5999, {"action": "click", "x": 10, "y": 20})
+            with mock.patch.object(soil, "computer_perform",
+                                   side_effect=computer_use.ComputerUseError(400, "bad input")):
+                status, data = self.request("POST", action_url, {"action": "wrong"}, headers)
+                self.assertEqual(status, 400)
+                self.assertIn("bad input", json.loads(data)["error"])
+        finally:
+            self.host.running.pop(mid)
 
 
 if __name__ == "__main__":

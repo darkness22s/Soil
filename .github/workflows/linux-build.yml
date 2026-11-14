@@ -31,7 +31,7 @@ jobs:
 
       - name: Compile Python and validate browser adapter
         run: |
-          python3 -m py_compile app/linux/soil.py app/linux/tests/test_soil.py
+          python3 -m py_compile app/linux/soil.py app/linux/computer_use.py app/linux/tests/test_soil.py
           node --check app/linux/linux-ui.js
 
       - name: Unit tests (API, persistence, mocked QEMU lifecycle)
@@ -43,6 +43,8 @@ jobs:
           test -s app/linux/dist/Soil-Linux-x86_64.tar.gz
           tar -tzf app/linux/dist/Soil-Linux-x86_64.tar.gz | grep -q 'Soil-Linux/ui/app.html'
           tar -tzf app/linux/dist/Soil-Linux-x86_64.tar.gz | grep -q 'Soil-Linux/soil.py'
+          test -f app/linux/dist/Soil-Linux/vendor/vncdotool/command.py
+          test -f app/linux/dist/Soil-Linux/third-party/vncdotool-LICENSE.txt
 
       - name: Start packaged host and verify HTTP
         shell: bash

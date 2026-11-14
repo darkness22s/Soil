@@ -5,8 +5,17 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DEST="$ROOT/app/linux/dist"
 BUNDLE="$DEST/Soil-Linux"
 rm -rf "$BUNDLE"
-mkdir -p "$BUNDLE/ui" "$BUNDLE/skill/soil-control"
+mkdir -p "$BUNDLE/ui" "$BUNDLE/skill/soil-control" "$BUNDLE/third-party"
 install -m 755 "$ROOT/app/linux/soil.py" "$BUNDLE/soil.py"
+install -m 644 "$ROOT/app/linux/computer_use.py" "$BUNDLE/computer_use.py"
+install -m 644 "$ROOT/app/linux/requirements-computer-use.txt" "$BUNDLE/requirements-computer-use.txt"
+install -m 644 "$ROOT/app/linux/THIRD_PARTY_NOTICES.md" "$BUNDLE/THIRD_PARTY_NOTICES.md"
+install -m 644 "$ROOT/app/linux/third-party/vncdotool-LICENSE.txt" "$BUNDLE/third-party/vncdotool-LICENSE.txt"
+# Bundle the upstream VNC automation library and wheels, not merely a URL or
+# an install-on-first-use command. No package work occurs on app/VM startup.
+python3 -m pip install --disable-pip-version-check --no-input --no-cache-dir \
+    --target "$BUNDLE/vendor" -r "$ROOT/app/linux/requirements-computer-use.txt"
+test -f "$BUNDLE/vendor/vncdotool/command.py"
 install -m 644 "$ROOT/app/linux/linux-ui.js" "$BUNDLE/linux-ui.js"
 cp -a "$ROOT/app/Soil/ui/." "$BUNDLE/ui/"
 install -m 644 "$ROOT/app/Soil/skill/soil-control/SKILL.md" "$BUNDLE/skill/soil-control/SKILL.md"
