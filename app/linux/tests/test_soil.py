@@ -1,5 +1,6 @@
 """Portable unit and API smoke tests for Soil's Linux host."""
 import http.client
+import io
 import json
 import os
 import tempfile
@@ -9,6 +10,15 @@ from pathlib import Path
 from unittest import mock
 
 from app.linux import soil
+
+
+def elf_image(architecture=62):
+    header = bytearray(64)
+    header[:4] = b"\x7fELF"
+    header[4] = 2  # ELF64
+    header[5] = 1  # little-endian
+    header[18:20] = architecture.to_bytes(2, "little")
+    return bytes(header)
 
 
 class LinuxHostTests(unittest.TestCase):
@@ -45,6 +55,49 @@ class LinuxHostTests(unittest.TestCase):
         with self.assertRaises(soil.SoilError):
             self.host.create("ok", "huge")
         self.assertFalse(self.host.safe_id("../etc/passwd"))
+
+    def test_native_import_stays_stopped_and_persists(self):
+        binary = elf_image()
+        vm = self.host.create_native("Trusted Demo.AppImage", io.BytesIO(binary), len(binary))
+        path = self.home / "apps" / vm["id"] / "app.AppImage"
+        self.assertTrue(path.is_file())
+        self.assertTrue(path.stat().st_mode & 0o100)
+        self.assertEqual(vm["kind"], "app")
+        self.assertEqual(vm["status"], "stopped")
+        self.assertFalse(self.host.running)
+        fresh = soil.LinuxHost(self.home)
+        self.assertEqual(fresh.get(vm["id"])["status"], "stopped")
+        self.assertEqual(fresh.get(vm["id"])["app"]["status"], "stopped")
+        self.assertTrue(fresh.delete(vm["id"]))
+        self.assertFalse(path.parent.exists())
+
+    def test_native_upload_rejects_non_elf_wrong_arch_and_traversal(self):
+        for name, content in [
+            ("demo.AppImage", b"#! /bin/sh\n"),
+            ("wrong.elf", elf_image(183)),
+        ]:
+            with self.assertRaises(soil.native_apps.NativeAppError):
+                self.host.create_native(name, io.BytesIO(content), len(content))
+        with self.assertRaises(soil.SoilError):
+            self.host.create_native("../demo.elf", io.BytesIO(elf_image()), 64)
+        self.assertEqual(self.host.list(), [])
+        self.assertFalse(list((self.home / "apps").iterdir()))
+
+    def test_native_launch_reuses_vm_controls_and_stops_processes(self):
+        vm = self.host.create_native("Demo.elf", io.BytesIO(elf_image()), 64)
+        app = mock.Mock()
+        app.poll.return_value = None
+        tmp = tempfile.TemporaryDirectory()
+        runtime = dict(app=app, websocket_port=15940, started=soil.time.monotonic(),
+                       temporary=tmp, log=io.BytesIO())
+        with mock.patch.object(soil.native_apps, "start", return_value=runtime) as launch:
+            self.assertEqual(self.host.start(vm["id"])["status"], "running")
+            self.assertEqual(self.host.start(vm["id"])["status"], "running")
+            self.assertEqual(launch.call_count, 1)
+            self.assertIn(":15940/vnc.html?", self.host.console(vm["id"]))
+            self.assertEqual(self.host.stop(vm["id"])["status"], "stopped")
+        self.assertTrue(app.terminate.called)
+        self.assertEqual(self.host.running, {})
 
     def test_missing_dependencies_fails_before_process_launch(self):
         mid = self.host.create("Need QEMU", "m")["id"]
@@ -139,6 +192,28 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 404)
         status, _ = self.request("GET", "/api/vms/not-an-id/console")
         self.assertEqual(status, 404)
+
+    def test_native_http_binary_upload_start_and_delete(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=5)
+        conn.request("POST", "/api/apps/native", body=elf_image(),
+                     headers={"Content-Type": "application/octet-stream",
+                              "X-Soil-Filename": "Demo.AppImage"})
+        response = conn.getresponse()
+        self.assertEqual(response.status, 200)
+        vm = json.loads(response.read())
+        conn.close()
+        self.assertEqual(vm["status"], "stopped")
+        self.assertFalse(self.host.running)
+        status, data = self.request("GET", "/api/vms")
+        self.assertEqual(json.loads(data)[0]["kind"], "app")
+        status, data = self.request("DELETE", "/api/vms/" + vm["id"])
+        self.assertEqual(status, 200)
+        self.assertFalse((self.host.home / "apps" / vm["id"]).exists())
+
+    def test_native_http_rejects_invalid_type(self):
+        status, data = self.request("POST", "/api/apps/native", {"name": "bad"})
+        self.assertEqual(status, 415)
+        self.assertIn("octet-stream", json.loads(data)["error"])
 
     def test_unsupported_features_fail_clearly(self):
         status, data = self.request("POST", "/api/apps", {"repoUrl": "https://github.com/o/r"})
