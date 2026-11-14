@@ -1,6 +1,10 @@
 name: Soil experimental WHPX runtime verification
 
 on:
+  push:
+    branches: [feature/vm-snapshot-on-demand-parking]
+    paths:
+      - '.github/workflows/whpx-runtime-verification.yml'
   pull_request:
     branches: [main]
     paths:
