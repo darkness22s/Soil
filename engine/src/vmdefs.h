@@ -254,6 +254,8 @@ void VhLogTeeConsole(FILE *pFile, const void *pv, size_t cb);
 int  VhWhvInit(VH_VM *pVm, u32 cCpus);
 void VhWhvTerm(VH_VM *pVm);
 int  VhWhvMapRam(VH_VM *pVm);
+int  VhWhvMapScratch(VH_VM *pVm);
+int  VhWhvMapRamChunk(VH_VM *pVm, u64 uGpa, void *pvPage, u64 cb);
 int  VhWhvMapMmioPage(VH_VM *pVm, u64 uGpa, void *pvPage, u64 cb);
 int  VhWhvCreateCpu(VH_VM *pVm);
 int  VhWhvSetReg(VH_VM *pVm, WHV_REGISTER_NAME enm, WHV_REGISTER_VALUE val);
