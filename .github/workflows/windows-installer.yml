@@ -44,6 +44,8 @@ jobs:
         run: |
           node --check .\app\Soil\ui\app.js
           node --check .\app\Soil\ui\app-ui.js
+          node --check .\app\Soil\ui\skill-ui.js
+          node --test .\tools\soil-ci\skill-ui.test.mjs
           node --check .\app\Soil\ui\onboarding.js
           node --check .\app\auth-worker\src\index.js
           node --check .\tools\soil-ci\soil-ci.mjs
