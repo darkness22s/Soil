@@ -10,9 +10,11 @@ host's feature set. See [`app/macos/README.md`](app/macos/README.md) before use.
 
 A Linux x86_64 host preview is under [`app/linux`](app/linux/README.md). It serves
 `app.html` in your browser and runs guest VMs with QEMU/KVM and noVNC. It is a
-separate launcher, with partial feature parity; use `bash app/linux/build.sh`
-to produce the Linux tarball and see the Linux README for dependencies and
-limitations.
+separate launcher, with partial feature parity. The Linux launcher can
+also import trusted local x86_64 ELF/AppImage apps and display their native GUI
+through noVNC. **Imported native apps execute as the Linux host user—not
+inside a VM or security sandbox.** Use `bash app/linux/build.sh` to produce
+the Linux tarball; see the Linux README for setup, security and limitations.
 
 This repository is a private build. Do not redistribute the installer or build
 artifacts yet.
