@@ -23,9 +23,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           lfs: true
-      - name: Inspect Tiny Core guest startup scripts
+      - name: Optimize guest cold-boot initrd
         shell: pwsh
-        run: python .\\engine\\inspect-initrd.py .\\app\\images\\core2.gz
+        run: |
+          python .\engine\fastboot-initrd.py .\app\images\core2.gz .\app\images\core2.gz
+          if ($LASTEXITCODE -ne 0) { throw 'Initrd optimization failed' }
       - name: Inspect Windows virtualization environment
         shell: pwsh
         run: |
