@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ImagesDir,
     [int]$BootTimeoutSeconds = 180,
-    [string]$KernelCmdLine = "console=tty0 quiet loglevel=0 acpi=off noapic nolapic mitigations=off nozswap idle=poll",
+    [string]$KernelCmdLine = "console=ttyS0 quiet loglevel=3 acpi=off noapic nolapic mitigations=off nozswap idle=poll",
     [switch]$SkipBuild
 )
 
@@ -26,6 +26,7 @@ $directory = Join-Path $env:TEMP ("soil-snap-smoke-" + [guid]::NewGuid().ToStrin
 New-Item -ItemType Directory -Path $directory -Force | Out-Null
 $snapshot = Join-Path $directory "resume.snap"
 $consumed = Join-Path $directory "resume.in-use.snap"
+$dataDisk = Join-Path $directory "fresh-data.img"
 $live = $null
 
 function Get-FreePort {
@@ -53,6 +54,7 @@ function Test-SshBanner([int]$port) {
 
 function Start-Guest([string]$logPath, [string]$restorePath) {
     $script:activeLogPath = $logPath
+    $script:activeSerialPath = "$logPath.serial"
     $script:sshPort = Get-FreePort
     $mcpPort = Get-FreePort
     while ($mcpPort -eq $script:sshPort) { $mcpPort = Get-FreePort }
@@ -61,6 +63,7 @@ function Start-Guest([string]$logPath, [string]$restorePath) {
         "--kernel", (Join-Path $images "vmlinuz64"),
         "--initrd", (Join-Path $images "core2.gz"),
         "--disk", (Join-Path $images "soil.squashfs"),
+        "--data-disk", $dataDisk, "--data-gb", "40",
         "--ram", "512", "--cmdline", $KernelCmdLine, "--no-ui", "--ipc", $script:token,
         "--log", $logPath,
         "--ssh-port", $script:sshPort.ToString(),
@@ -70,7 +73,7 @@ function Start-Guest([string]$logPath, [string]$restorePath) {
     if ($restorePath) { $args += @("--restore", $restorePath) }
     $quoted = $args | ForEach-Object { '"' + $_.Replace('"', '\\"') + '"' }
     $script:clock = [Diagnostics.Stopwatch]::StartNew()
-    $script:live = Start-Process -FilePath $engine -ArgumentList $quoted -PassThru -WindowStyle Hidden
+    $script:live = Start-Process -FilePath $engine -ArgumentList $quoted -PassThru -WindowStyle Hidden -RedirectStandardOutput $script:activeSerialPath
     $until = [DateTime]::UtcNow.AddSeconds($BootTimeoutSeconds)
     while ([DateTime]::UtcNow -lt $until) {
         $script:live.Refresh()
@@ -124,6 +127,12 @@ function Stop-GuestClean {
     $hotPorts = Get-Content -LiteralPath $script:activeLogPath |
         Select-String 'io: hot ports' | Select-Object -Last 1
     if ($hotPorts) { Write-Host ("VM I/O profile: " + $hotPorts.Line) }
+    if (Test-Path $script:activeSerialPath) {
+        Get-Content -LiteralPath $script:activeSerialPath |
+            Where-Object { $_ -match '(TCLMARK:|BOOTY:|SOIL: .*t=)' } |
+            Select-Object -First 45 |
+            ForEach-Object { Write-Host ("Guest bootstrap: " + $_.Trim()) }
+    }
     $script:live.Dispose()
     $script:live = $null
 }
