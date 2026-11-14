@@ -1602,7 +1602,10 @@ public sealed class VmManager
                     break;
                 await Task.Delay(400, ct);
             }
-            await Task.Delay(TimeSpan.FromSeconds(25), ct);
+            // Guest framebuffer availability, not a fixed 25-second sleep,
+            // determines when a headless/no-SSH VM becomes interactable.
+            // Allow two more display frames for compositor initialization.
+            await Task.Delay(TimeSpan.FromMilliseconds(750), ct);
             return;
         }
 
