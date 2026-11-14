@@ -58,34 +58,8 @@ jobs:
             url=$(grep -oE 'http://127\.0\.0\.1:[0-9]+' /tmp/soil-linux.log | head -1 || true)
             if [ -n "$url" ] && curl --fail --silent "$url/api/health" | grep -q '"ok": true'; then
               curl --fail --silent "$url/" | grep -q 'id="newVm"'
-              curl --fail --silent "$url/api/vms" | grep -q '^\[\]              exit 0
-            fi
-            sleep 0.25
-          done
-          cat /tmp/soil-linux.log
-          exit 1
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Soil-Linux-x86_64
-          path: app/linux/dist/Soil-Linux-x86_64.tar.gz
-          if-no-files-found: error
-          retention-days: 14
-
-              app/linux/dist/Soil-Linux/soil computer --home "$RUNNER_TEMP/soil-linux-smoke" list | grep -q '^\[\]              exit 0
-            fi
-            sleep 0.25
-          done
-          cat /tmp/soil-linux.log
-          exit 1
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Soil-Linux-x86_64
-          path: app/linux/dist/Soil-Linux-x86_64.tar.gz
-          if-no-files-found: error
-          retention-days: 14
-
+              curl --fail --silent "$url/api/vms" | grep -q '^\[\]$'
+              app/linux/dist/Soil-Linux/soil computer --home "$RUNNER_TEMP/soil-linux-smoke" list | grep -q '^\[\]$'
               exit 0
             fi
             sleep 0.25
