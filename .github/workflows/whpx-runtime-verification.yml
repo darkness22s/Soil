@@ -1,10 +1,6 @@
 name: Soil experimental WHPX runtime verification
 
 on:
-  push:
-    branches: [feature/vm-snapshot-on-demand-parking]
-    paths:
-      - '.github/workflows/whpx-runtime-verification.yml'
   pull_request:
     branches: [main]
     paths:
@@ -41,6 +37,10 @@ jobs:
                           SecondLevelAddressTranslationExtensions | Format-List
           $feature = Get-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -ErrorAction SilentlyContinue
           Write-Host "Windows Hypervisor Platform: $($feature.State)"
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
       - name: Install MinGW-w64 compiler
         uses: bwoodsend/setup-winlibs-action@v1
       - name: Build native vmhost
@@ -51,3 +51,15 @@ jobs:
       - name: Boot real guest, snapshot, verify full exit, and restore
         shell: pwsh
         run: .\engine\snapshot-smoke-test.ps1 -ImagesDir .\app\images -SkipBuild -BootTimeoutSeconds 120
+      - name: Verify Soil app VM controller start, idle, recall, and stop
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "soil-app-vm-smoke"
+          dotnet publish .\app\Soil\Soil.csproj -c Release -r win-x64 --self-contained true -o $out --nologo
+          if ($LASTEXITCODE -ne 0) { throw "Soil app publish failed" }
+          New-Item -ItemType Directory -Force -Path (Join-Path $out "engine") | Out-Null
+          New-Item -ItemType Directory -Force -Path (Join-Path $out "images") | Out-Null
+          Copy-Item .\engine\bin\vmhost.exe (Join-Path $out "engine\vmhost.exe") -Force
+          Copy-Item .\app\images\* (Join-Path $out "images") -Force
+          dotnet run --project .\tests\Soil.VmLifecycleSmoke\Soil.VmLifecycleSmoke.csproj -c Release -- "$out"
+          if ($LASTEXITCODE -ne 0) { throw "App VM lifecycle verification failed" }
