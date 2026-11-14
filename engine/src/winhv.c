@@ -111,15 +111,39 @@ int VhWhvMapRam(VH_VM *pVm)
         return 1;
     }
 
-    /* Legacy VGA/BIOS hole 0xA0000..0x100000 backed by scratch. */
-    hrc = WHvMapGpaRange(pVm->hPartition, pVm->mem.pbScratch, 0xA0000, pVm->mem.cbScratch,
-                         WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite | WHvMapGpaRangeFlagExecute);
+    if (VhWhvMapScratch(pVm))
+        return 1;
+    VhLog("whv: memory mapped (ram=%lluMiB + 384KiB hole)", (unsigned long long)(pVm->mem.cbRam >> 20));
+    return 0;
+}
+
+/* Restore maps only the 384 KiB legacy hole up front. The guest RAM
+   remains unmapped until a snapshot chunk is actually touched. */
+int VhWhvMapScratch(VH_VM *pVm)
+{
+    HRESULT hrc = WHvMapGpaRange(pVm->hPartition, pVm->mem.pbScratch, 0xA0000,
+                                 pVm->mem.cbScratch,
+                                 WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite |
+                                 WHvMapGpaRangeFlagExecute);
     if (FAILED(hrc))
     {
         VhLog("whv: map scratch hole failed: %#lx", (unsigned long)hrc);
         return 1;
     }
-    VhLog("whv: memory mapped (ram=%lluMiB + 384KiB hole)", (unsigned long long)(pVm->mem.cbRam >> 20));
+    return 0;
+}
+
+int VhWhvMapRamChunk(VH_VM *pVm, u64 uGpa, void *pvPage, u64 cb)
+{
+    HRESULT hrc = WHvMapGpaRange(pVm->hPartition, pvPage, uGpa, cb,
+                                 WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite |
+                                 WHvMapGpaRangeFlagExecute);
+    if (FAILED(hrc))
+    {
+        VhLog("whv: lazy RAM chunk at %#llx failed: %#lx",
+              (unsigned long long)uGpa, (unsigned long)hrc);
+        return 1;
+    }
     return 0;
 }
 
