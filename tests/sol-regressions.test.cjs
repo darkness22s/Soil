@@ -50,6 +50,8 @@ test('VMs start on demand, restore single-use snapshots, and cleanly park when i
   assert.match(paths, /MachineSnapshotPath/);
   assert.match(paths, /MachineRestorePath/);
   assert.match(manager, /runtime\.RestartAfterStop = true/);
+  assert.match(manager, /runtime\.LastUiActivityUtc/);
+  assert.match(manager, /DateTime\.UtcNow - runtime\.LastUiActivityUtc > TimeSpan\.FromSeconds\(90\)/);
   assert.match(main, /m_vmManager\.IdleAll\(\)/);
   assert.doesNotMatch(main, /m_vmManager\.ResumeAll\(\)/);
   assert.match(ipc, /fCleanExit = true/);
