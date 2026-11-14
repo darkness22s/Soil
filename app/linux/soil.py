@@ -26,6 +26,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+try:
+    from . import installer_iso
+except ImportError:  # Running directly from the source checkout or Linux bundle.
+    import installer_iso
+
 HERE = Path(__file__).resolve().parent
 UI_DIR = HERE / "ui" if (HERE / "ui" / "app.html").is_file() else HERE.parent / "Soil" / "ui"
 SKILL_FILE = (HERE / "skill" / "soil-control" / "SKILL.md"
@@ -104,7 +109,9 @@ class LinuxHost:
         for machine in self.machines.values():
             atomic_json(self.home / "machines" / machine["id"] / "machine.json", machine)
 
-    def create(self, name: object, size: object = "m") -> dict:
+    def create(self, name: object, size: object = "m", boot: object = "soil") -> dict:
+        if boot not in ("soil", "linux-iso"):
+            raise SoilError("Unknown VM boot mode.")
         if not isinstance(name, str) or not name.strip():
             raise SoilError("A machine name is required.")
         if not isinstance(size, str) or size.lower() not in SIZES:
@@ -121,12 +128,68 @@ class LinuxHost:
             mid = uuid.uuid4().hex
             machine = {
                 "id": mid, "name": candidate, "ramMb": ram, "cpu": cpus,
-                "diskGb": disk, "size": size, "os": "Soil Desktop",
+                "diskGb": disk, "size": size,
+                "os": "Linux (installer)" if boot == "linux-iso" else "Soil Desktop",
+                "bootMode": boot,
                 "kind": "desktop", "createdUtc": utcnow(),
             }
             (self.home / "machines" / mid / "data").mkdir(parents=True, exist_ok=True)
             (self.home / "machines" / mid / "logs").mkdir(parents=True, exist_ok=True)
             self.machines[mid] = machine
+            self.save()
+            return self._dto(machine)
+
+    def _installer_path(self, mid: str) -> Path:
+        return self.home / "machines" / mid / "media" / "installer.iso"
+
+    def mount_installer(self, mid: str, filename: str, source: object, length: int) -> dict | None:
+        with self.lock:
+            machine = self.machines.get(mid)
+            if not machine:
+                return None
+            if machine.get("bootMode") != "linux-iso":
+                raise SoilError("Only Linux installer VMs accept installation ISOs.")
+            if mid in self.running:
+                raise SoilError("Stop the VM before changing installer media.")
+            if (not filename.lower().endswith(".iso") or len(filename) > 200 or
+                    any(c in filename for c in ("/", "\\\\", "\\x00"))):
+                raise SoilError("Choose a local .iso file without path components.")
+            try:
+                installer_iso.save_iso(source, length, self._installer_path(mid))
+            except installer_iso.InstallerError as exc:
+                raise SoilError(str(exc)) from exc
+            machine["installerName"] = filename
+            machine["bootInstallerNext"] = True
+            self.save()
+            return self._dto(machine)
+
+    def boot_installer_next(self, mid: str) -> dict | None:
+        with self.lock:
+            machine = self.machines.get(mid)
+            if not machine:
+                return None
+            if machine.get("bootMode") != "linux-iso":
+                raise SoilError("This is not a Linux installer VM.")
+            if mid in self.running:
+                raise SoilError("Stop the VM before choosing installer boot.")
+            if not self._installer_path(mid).is_file():
+                raise SoilError("Attach an installer ISO first.")
+            machine["bootInstallerNext"] = True
+            self.save()
+            return self._dto(machine)
+
+    def eject_installer(self, mid: str) -> dict | None:
+        with self.lock:
+            machine = self.machines.get(mid)
+            if not machine:
+                return None
+            if machine.get("bootMode") != "linux-iso":
+                raise SoilError("This is not a Linux installer VM.")
+            if mid in self.running:
+                raise SoilError("Stop the VM before ejecting the installer ISO.")
+            self._installer_path(mid).unlink(missing_ok=True)
+            machine.pop("installerName", None)
+            machine["bootInstallerNext"] = False
             self.save()
             return self._dto(machine)
 
@@ -153,6 +216,12 @@ class LinuxHost:
             "os": machine.get("os", "Soil Desktop"),
             "uptimeSec": uptime, "error": error, "series": [],
             "kind": machine.get("kind", "desktop"),
+            "bootMode": machine.get("bootMode", "soil"),
+            "installer": ({
+                "mounted": self._installer_path(mid).is_file(),
+                "name": machine.get("installerName"),
+                "bootNext": bool(machine.get("bootInstallerNext")),
+            } if machine.get("bootMode") == "linux-iso" else None),
             "app": None, "agent": None,
         }
 
@@ -225,15 +294,24 @@ class LinuxHost:
             if mid in self.running:
                 return self._dto(machine)
             qemu, qemu_img, ws, novnc = self.requirements()
-            images = self.image_dir()
+            install_linux = machine.get("bootMode") == "linux-iso"
+            if install_linux:
+                if (machine.get("bootInstallerNext") and
+                        not self._installer_path(mid).is_file()):
+                    raise SoilError("Attach a Linux installer ISO before starting this VM.")
+            else:
+                images = self.image_dir()
             folder = self.home / "machines" / mid
             disk = folder / "data" / "linux-disk.qcow2"
             disk.parent.mkdir(parents=True, exist_ok=True)
             if not disk.exists():
+                create_args = ([qemu_img, "create", "-f", "qcow2", str(disk),
+                                str(int(machine.get("diskGb") or 80)) + "G"]
+                               if install_linux else
+                               [qemu_img, "create", "-f", "qcow2", "-F", "raw",
+                                "-b", str(images / "soil.squashfs"), str(disk)])
                 result = subprocess.run(
-                    [qemu_img, "create", "-f", "qcow2", "-F", "raw",
-                     "-b", str(images / "soil.squashfs"), str(disk)],
-                    capture_output=True, text=True, timeout=30, check=False,
+                    create_args, capture_output=True, text=True, timeout=30, check=False,
                 )
                 if result.returncode:
                     raise SoilError("Could not create VM disk: " + result.stderr.strip()[:500])
@@ -255,10 +333,13 @@ class LinuxHost:
                 "-cpu", "host" if kvm else "max",
                 "-smp", str(max(1, min(int(machine.get("cpu", 1)), 8))),
                 "-m", str(int(machine.get("ramMb") or 1024)),
-                "-kernel", str(images / "vmlinuz64"),
-                "-initrd", str(images / "core2.gz"),
-                "-append", "console=ttyS0 quiet loglevel=3 acpi=off noapic nolapic mitigations=off nozswap",
-                "-drive", "file=" + str(disk) + ",format=qcow2,if=virtio",
+                *(installer_iso.qemu_boot_args(machine, disk, self._installer_path(mid))
+                  if install_linux else [
+                    "-kernel", str(images / "vmlinuz64"),
+                    "-initrd", str(images / "core2.gz"),
+                    "-append", "console=ttyS0 quiet loglevel=3 acpi=off noapic nolapic mitigations=off nozswap",
+                    "-drive", "file=" + str(disk) + ",format=qcow2,if=virtio",
+                  ]),
                 "-display", "none", "-vnc", "127.0.0.1:" + str(display),
                 "-qmp", "unix:" + str(monitor) + ",server=on,wait=off",
                 "-serial", "file:" + str(folder / "logs" / "serial.log"),
@@ -283,6 +364,11 @@ class LinuxHost:
                     "websocket_port": websocket_port, "monitor": monitor,
                     "started": time.monotonic(), "temporary": temporary, "log": log,
                 }
+                if install_linux and machine.get("bootInstallerNext"):
+                    # ISO boots once. Subsequent Start and guest reboot prefer the
+                    # installed disk; the user can explicitly re-arm ISO boot.
+                    machine["bootInstallerNext"] = False
+                    self.save()
                 return self._dto(machine)
             except Exception:
                 for process in (webproc, qproc):
@@ -482,6 +568,20 @@ class Handler(BaseHTTPRequestHandler):
                         return self._send(404, {"error": "Linux uses the noVNC console."})
                 return self._static(path)
             if self.command == "POST":
+                media = path.strip("/").split("/")
+                if (len(media) == 4 and media[:2] == ["api", "vms"] and
+                        host.safe_id(media[2]) and media[3] == "installer"):
+                    if self.headers.get("Content-Type", "").split(";")[0].strip().lower() != "application/octet-stream":
+                        return self._send(415, {"error": "Expected application/octet-stream."})
+                    try:
+                        size = int(self.headers.get("Content-Length", "0"))
+                    except ValueError:
+                        return self._send(400, {"error": "Invalid ISO content length."})
+                    if size < installer_iso.MIN_ISO_BYTES or size > installer_iso.MAX_ISO_BYTES:
+                        return self._send(413, {"error": "Installer ISO must be between 32 KiB and 12 GiB."})
+                    filename = unquote(self.headers.get("X-Soil-Filename", ""))
+                    dto = host.mount_installer(media[2], filename, self.rfile, size)
+                    return self._send(200, dto) if dto else self._send(404, {"error": "Machine not found."})
                 body = self._json_body()
                 if path == "/api/ui":
                     self.server.ui_state.update({k: body[k] for k in ("purpose", "agents", "package", "theme")
@@ -489,12 +589,17 @@ class Handler(BaseHTTPRequestHandler):
                     atomic_json(host.home / "ui-state.json", self.server.ui_state)
                     return self._send(200, dict(self.server.ui_state, onboardingComplete=True))
                 if path == "/api/vms":
-                    return self._send(200, host.create(body.get("name"), body.get("size") or "m"))
+                    return self._send(200, host.create(body.get("name"), body.get("size") or "m",
+                                                        body.get("boot") or "soil"))
                 if path == "/api/skill/install":
                     return self._send(200, install_skills())
                 if path in ("/api/agents", "/api/apps"):
                     return self._send(501, {"error": "The Linux preview supports desktop VMs only."})
                 parts = path.strip("/").split("/")
+                if (len(parts) == 5 and parts[:2] == ["api", "vms"] and
+                        host.safe_id(parts[2]) and parts[3:] == ["installer", "boot"]):
+                    dto = host.boot_installer_next(parts[2])
+                    return self._send(200, dto) if dto else self._send(404, {"error": "Machine not found."})
                 if len(parts) == 4 and parts[:2] == ["api", "vms"] and host.safe_id(parts[2]):
                     mid, action = parts[2:]
                     if action == "start":
@@ -509,6 +614,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, {"error": "Unknown endpoint."})
             if self.command == "DELETE":
                 parts = path.strip("/").split("/")
+                if (len(parts) == 4 and parts[:2] == ["api", "vms"] and
+                        host.safe_id(parts[2]) and parts[3] == "installer"):
+                    dto = host.eject_installer(parts[2])
+                    return self._send(200, dto) if dto else self._send(404, {"error": "Machine not found."})
                 if len(parts) == 3 and parts[:2] == ["api", "vms"] and host.safe_id(parts[2]):
                     if host.delete(parts[2]):
                         return self._send(200, {"id": parts[2], "deleted": True})
