@@ -1,5 +1,6 @@
 """Portable unit and API smoke tests for Soil's Linux host."""
 import http.client
+import io
 import json
 import os
 import tempfile
@@ -9,6 +10,12 @@ from pathlib import Path
 from unittest import mock
 
 from app.linux import soil
+
+
+def fake_iso():
+    data = bytearray(40000)
+    data[32769:32774] = b"CD001"  # ISO9660 primary volume descriptor.
+    return bytes(data)
 
 
 class LinuxHostTests(unittest.TestCase):
@@ -45,6 +52,73 @@ class LinuxHostTests(unittest.TestCase):
         with self.assertRaises(soil.SoilError):
             self.host.create("ok", "huge")
         self.assertFalse(self.host.safe_id("../etc/passwd"))
+
+    def test_linux_installer_media_and_disk_persist(self):
+        vm = self.host.create("Ubuntu", "standard", "linux-iso")
+        self.assertEqual(vm["status"], "stopped")
+        self.assertFalse(vm["installer"]["mounted"])
+        self.assertEqual(vm["diskGb"], 80)
+        image = fake_iso()
+        imported = self.host.mount_installer(vm["id"], "ubuntu.iso", io.BytesIO(image), len(image))
+        self.assertTrue(imported["installer"]["bootNext"])
+        self.assertTrue(imported["installer"]["mounted"])
+        self.assertEqual(self.host._installer_path(vm["id"]).read_bytes(), image)
+        fresh = soil.LinuxHost(self.home)
+        self.assertTrue(fresh.get(vm["id"])["installer"]["bootNext"])
+        self.assertEqual(fresh.eject_installer(vm["id"])["installer"]["mounted"], False)
+        self.assertFalse(fresh._installer_path(vm["id"]).exists())
+        self.assertTrue(fresh.delete(vm["id"]))
+
+    def test_linux_iso_validation_replaces_atomically(self):
+        vm = self.host.create("Debian", "standard", "linux-iso")
+        mid = vm["id"]
+        original = fake_iso()
+        self.host.mount_installer(mid, "debian.iso", io.BytesIO(original), len(original))
+        for bad in (b"A" * 40000, b"short"):
+            with self.assertRaises(soil.SoilError):
+                self.host.mount_installer(mid, "bad.iso", io.BytesIO(bad), len(bad))
+        self.assertEqual(self.host._installer_path(mid).read_bytes(), original)
+        with self.assertRaises(soil.SoilError):
+            self.host.mount_installer(mid, "../evil.iso", io.BytesIO(original), len(original))
+        with self.assertRaises(soil.SoilError):
+            self.host.create("invalid", "standard", "bad-boot")
+        self.assertEqual(self.host.get(mid)["installer"]["name"], "debian.iso")
+
+    def test_iso_vm_boots_from_virtual_cdrom_without_private_images(self):
+        vm = self.host.create("Linux", "standard", "linux-iso")
+        mid = vm["id"]
+        with self.assertRaisesRegex(soil.SoilError, "Attach"):
+            self.host.start(mid)
+        iso = fake_iso()
+        self.host.mount_installer(mid, "linux.iso", io.BytesIO(iso), len(iso))
+        bindir = Path(self.temp.name) / "bin"
+        bindir.mkdir()
+        for tool in ("qemu-system-x86_64", "qemu-img", "websockify"):
+            script = bindir / tool
+            script.write_text("#!/bin/sh\n" + (
+                'for a in "$@"; do case "$a" in *.qcow2) : > "$a";; esac; done\n'
+                if tool == "qemu-img" else "exec sleep 30\n"))
+            script.chmod(0o755)
+        novnc = Path(self.temp.name) / "novnc"
+        novnc.mkdir()
+        (novnc / "vnc.html").write_text("mock noVNC")
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + ":" + os.environ["PATH"]}):
+            with mock.patch.object(soil, "no_vnc_root", return_value=novnc):
+                with mock.patch.object(soil.subprocess, "Popen", wraps=soil.subprocess.Popen) as popen:
+                    booted = self.host.start(mid)
+                    self.assertEqual(booted["status"], "running")
+                    self.assertFalse(booted["installer"]["bootNext"])
+                    args = popen.call_args_list[0].args[0]
+                    self.assertIn("once=d,order=c,menu=on", args)
+                    self.assertIn(str(self.host._installer_path(mid)), " ".join(args))
+                    self.assertNotIn("-kernel", args)
+                    self.assertTrue((self.home / "machines" / mid / "data" / "linux-disk.qcow2").is_file())
+                self.assertEqual(self.host.stop(mid)["status"], "stopped")
+                with mock.patch.object(soil.subprocess, "Popen", wraps=soil.subprocess.Popen) as popen:
+                    self.host.start(mid)
+                    self.assertIn("order=c,menu=on", popen.call_args_list[0].args[0])
+                    self.assertNotIn("once=d,order=c,menu=on", popen.call_args_list[0].args[0])
+                self.assertEqual(self.host.stop(mid)["status"], "stopped")
 
     def test_missing_dependencies_fails_before_process_launch(self):
         mid = self.host.create("Need QEMU", "m")["id"]
@@ -139,6 +213,27 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 404)
         status, _ = self.request("GET", "/api/vms/not-an-id/console")
         self.assertEqual(status, 404)
+
+    def test_linux_installer_http_attach_boot_eject(self):
+        status, vm_data = self.request("POST", "/api/vms", {
+            "name": "Ubuntu", "size": "standard", "boot": "linux-iso",
+        })
+        self.assertEqual(status, 200)
+        vm = json.loads(vm_data)
+        mid = vm["id"]
+        image = fake_iso()
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=5)
+        conn.request("POST", "/api/vms/" + mid + "/installer", body=image,
+                     headers={"Content-Type": "application/octet-stream",
+                              "X-Soil-Filename": "ubuntu.iso"})
+        response = conn.getresponse()
+        self.assertEqual(response.status, 200)
+        self.assertTrue(json.loads(response.read())["installer"]["bootNext"])
+        conn.close()
+        self.assertFalse(self.host.running)
+        self.assertEqual(self.request("POST", "/api/vms/" + mid + "/installer/boot", {})[0], 200)
+        self.assertEqual(self.request("DELETE", "/api/vms/" + mid + "/installer")[0], 200)
+        self.assertFalse(self.host._installer_path(mid).exists())
 
     def test_unsupported_features_fail_clearly(self):
         status, data = self.request("POST", "/api/apps", {"repoUrl": "https://github.com/o/r"})
