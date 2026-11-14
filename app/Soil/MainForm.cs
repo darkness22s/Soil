@@ -36,9 +36,10 @@ public sealed class MainForm : Form
         };
         m_idleTimer.Tick += (_, _) =>
         {
-            m_idleTimer.Stop();
             if (WindowState == FormWindowState.Minimized || !ContainsFocus)
                 m_vmManager.IdleAll();
+            else
+                m_idleTimer.Stop();
         };
         FormClosed += (_, _) => m_idleTimer.Dispose();
     }
