@@ -37,7 +37,7 @@ case "$action" in
 Type=Application
 Name=$name
 Comment=Native Linux application in Soil
-Exec=/usr/local/bin/soil-native launch $id
+Exec=/bin/soil-native launch $id
 Terminal=false
 Categories=Utility;
 EOF
