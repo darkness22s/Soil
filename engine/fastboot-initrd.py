@@ -25,10 +25,10 @@ def patch_bootlocal(payload):
         raise ValueError("Guest bootlocal.sh has changed; refusing an unsafe patch")
     payload = payload.replace(
         begin,
-        b"  # SOIL_FASTBOOT_ASYNC_ZRAM: prepare swap during disk/extension init\\n"
-        b"  (\\n" + begin,
+        b"  # SOIL_FASTBOOT_ASYNC_ZRAM: prepare swap during disk/extension init\n"
+        b"  (\n" + begin,
     )
-    payload = payload.replace(end, end + b"\\n  ) &")
+    payload = payload.replace(end, end + b"\n  ) &")
     return payload
 
 
@@ -46,7 +46,7 @@ def patch_cpio(data):
         next_entry = align4(payload_end)
         if next_entry > len(data) or not name_size:
             raise ValueError("Truncated cpio archive")
-        name = data[name_start:name_start + name_size].rstrip(b"\\x00")
+        name = data[name_start:name_start + name_size].rstrip(b"\x00")
         if name == b"opt/bootlocal.sh":
             original = data[payload_start:payload_end]
             updated = patch_bootlocal(original)
@@ -56,7 +56,7 @@ def patch_cpio(data):
             new_header[54:62] = f"{len(updated):08x}".encode("ascii")
             if header[:6] == b"070702":
                 new_header[102:110] = f"{sum(updated) & 0xFFFFFFFF:08x}".encode("ascii")
-            pad = b"\\x00" * ((-len(updated)) % 4)
+            pad = b"\x00" * ((-len(updated)) % 4)
             return (data[:cursor] + bytes(new_header) +
                     data[name_start:payload_start] + updated + pad +
                     data[next_entry:]), True
