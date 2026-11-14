@@ -23,6 +23,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify native guest patcher and launcher
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tools/soil-ci -p test_native_guest.py -v
       - name: Install MinGW-w64
         shell: pwsh
         run: |
@@ -44,6 +51,7 @@ jobs:
         run: |
           node --check .\app\Soil\ui\app.js
           node --check .\app\Soil\ui\app-ui.js
+          node --check .\app\Soil\ui\native-ui.js
           node --check .\app\Soil\ui\skill-ui.js
           node --test .\tools\soil-ci\skill-ui.test.mjs
           node --check .\app\Soil\ui\onboarding.js
@@ -55,12 +63,15 @@ jobs:
         shell: pwsh
         run: |
           $root = Join-Path $PWD 'app/dist/Soil'
+          python tools/soil-ci/inject-native-guest.py (Join-Path $root 'images/core2.gz') (Join-Path $root 'images/core2.gz') --verify
+          if ($LASTEXITCODE -ne 0) { throw 'Missing native guest launcher in bundled initramfs' }
           foreach ($entry in @(
             @{ Name='images/vmlinuz64'; Minimum=7000000 },
             @{ Name='images/core2.gz'; Minimum=18000000 },
             @{ Name='images/soil.squashfs'; Minimum=400000000 },
             @{ Name='ui/app.html'; Minimum=20000 },
             @{ Name='ui/skill-ui.js'; Minimum=1000 },
+            @{ Name='ui/native-ui.js'; Minimum=1000 },
             @{ Name='skill/soil-control/SKILL.md'; Minimum=100 }
           )) {
             $path = Join-Path $root $entry.Name
