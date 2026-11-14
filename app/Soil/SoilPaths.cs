@@ -37,6 +37,7 @@ public sealed class SoilPaths
     public string ImagesDir => Path.Combine(Root, "images");
     public string ConfigPath => Path.Combine(Root, "config.json");
     public string ReadmePath => Path.Combine(Root, "README.txt");
+    public string CliEndpointPath => Path.Combine(Root, "cli-endpoint.json");
 
     public static SoilPaths CreateDefault()
     {

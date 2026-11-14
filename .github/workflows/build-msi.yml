@@ -1,0 +1,64 @@
+name: Build Soil MSI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'engine/**'
+      - '.github/workflows/build-msi.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'engine/**'
+      - '.github/workflows/build-msi.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out source and guest images
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Set up WinLibs MinGW-w64
+        uses: bwoodsend/setup-winlibs-action@v1
+
+      - name: Build VM engine
+        shell: pwsh
+        run: .\engine\build.ps1 -Gcc (Get-Command gcc).Source
+
+      - name: Install WiX Toolset
+        shell: pwsh
+        run: dotnet tool install --global wix --version 5.0.2
+
+      - name: Build MSI
+        shell: pwsh
+        run: .\app\build.ps1 -SkipEngine
+
+      - name: Upload MSI artifact
+        id: upload
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: Soil-4.2.1-x64
+          path: app/dist/Soil-4.2.1-x64.msi
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Report artifact upload failure
+        if: steps.upload.outcome == 'failure'
+        shell: pwsh
+        run: Write-Host '::warning::MSI built successfully, but artifact upload failed (check GitHub Actions storage quota). Free quota and rerun to publish the installer.'

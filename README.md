@@ -4,6 +4,10 @@ Soil is a local Windows host for small virtual machines and local apps. It runs
 soil guest images, keeps machine state and user content under `~/.soil`, and
 includes a Files view for browsing that home without leaving the app.
 
+An early Apple Silicon macOS launcher is available under `app/macos`. It uses
+QEMU software emulation for the x86_64 guest and does not yet provide the Windows
+host's feature set. See [`app/macos/README.md`](app/macos/README.md) before use.
+
 This repository is a private build. Do not redistribute the installer or build
 artifacts yet.
 
@@ -81,7 +85,7 @@ cache namespace when build environments intentionally differ.
 ```
 
 This publishes the self-contained app to `app\dist\Soil`, copies the VM engine
-and guest images, and builds `app\dist\Soil-0.3.11-x64.msi`. The installer is
+and guest images, and builds `app\dist\Soil-4.2.1-x64.msi`. The installer is
 per-user and runs `Soil.exe --bootstrap` to create the Soil home.
 
 To use different guest images, pass `-ImagesDir <path>` with a folder containing
@@ -111,6 +115,21 @@ GitHub-hosted runners, and self-hosted runners share the host's privileges.
 
 Use the Files tab to browse the Soil home. Use Settings to open the home folder.
 The host API listens on loopback only.
+
+With Soil running, control VMs from PowerShell using the installed executable:
+
+```powershell
+$soil = (Get-Process -Name Soil | Select-Object -First 1 -ExpandProperty Path)
+& $soil vm list
+& $soil vm create 'workbox' --size m
+& $soil vm start '<vm-id>'
+& $soil vm stop '<vm-id>'
+```
+
+`Soil.exe vm help` lists supported commands. The **Install Skill** button at the
+bottom of Soil installs the AI-ready `soil-control` skill into detected Claude
+Code, Codex, Sparky, and OpenCode user skill folders. Existing skills are never
+overwritten; the button reports each installation result and destination.
 
 ## SDK
 

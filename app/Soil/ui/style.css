@@ -199,3 +199,14 @@ select.in:disabled{opacity:.6}
 .app-progress{display:grid;gap:8px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel);font-size:13px;color:var(--ink2)}
 .app-progress pre{max-height:120px;margin:0;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--ink)}
 .ghsaverow{padding-top:0;border-top:0}
+.skill-button{display:flex;align-items:center;gap:10px;height:44px;padding:0 16px;border:1px solid var(--line);border-radius:12px;background:var(--bg);text-align:left;font-weight:600}
+.skill-button svg{width:18px;height:18px;flex:none}
+.skill-dlg{max-height:min(82vh,760px);overflow:auto}
+.skill-content{max-height:34vh;overflow:auto;margin:0;padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
+.install-results{display:grid;gap:8px;max-height:22vh;overflow:auto}
+.install-result{display:grid;gap:2px;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--panel);font-size:13px}
+.install-result code{overflow-wrap:anywhere;color:var(--ink2);font:11px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace}
+.install-result span{color:var(--ink2)}
+.install-result.not_detected{color:var(--ink2)}
+.install-result.conflict,.install-result.error{border-color:#D6454B}
+.skill-button:disabled{opacity:.6;cursor:wait}
