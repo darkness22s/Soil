@@ -39,10 +39,26 @@ jobs:
           if (-not $gcc) { throw "gcc.exe not found under $mingwRoot" }
           $env:PATH = "$($gcc.DirectoryName);$env:PATH"
           .\app\build.ps1 -ImagesDir .\app\images -Gcc $gcc.FullName
+      - name: Syntax-check JavaScript
+        shell: pwsh
+        run: |
+          node --check .\app\Soil\ui\app.js
+          node --check .\app\Soil\ui\app-ui.js
+          node --check .\app\Soil\ui\onboarding.js
+          node --check .\app\auth-worker\src\index.js
+          node --check .\tools\soil-ci\soil-ci.mjs
+
       - name: Upload installer
+        id: installer-upload
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: Soil-Windows-x64-installer
           path: app/dist/Soil-*-x64.msi
           if-no-files-found: error
           retention-days: 14
+
+      - name: Report installer upload failure
+        if: steps.installer-upload.outcome == 'failure'
+        shell: pwsh
+        run: Write-Host '::warning::Installer build passed but artifact publication failed. Check GitHub Actions artifact storage quota.'
