@@ -558,6 +558,7 @@ public sealed class VmManager
             runtime.StartGeneration++;
             var generation = runtime.StartGeneration;
             runtime.Status = "starting";
+            runtime.LastUiActivityUtc = DateTime.UtcNow;
             runtime.Error = null;
             runtime.StartedUtc = DateTime.UtcNow;
             runtime.History.Clear();
@@ -859,6 +860,8 @@ public sealed class VmManager
     public byte[]? FrameJpeg(string id)
     {
         var runtime = FindRuntime(id);
+        if (runtime is not null)
+            runtime.LastUiActivityUtc = DateTime.UtcNow;
         return runtime?.GetJpeg();
     }
 
@@ -924,6 +927,7 @@ public sealed class VmManager
             }
         }
 
+        runtime.LastUiActivityUtc = DateTime.UtcNow;
         lock (runtime.InputLock)
         {
             for (var attempt = 0; attempt < 2; attempt++)
@@ -980,6 +984,9 @@ public sealed class VmManager
         var lastSent = -1;
         while (!ct.IsCancellationRequested)
         {
+            // An attached MJPEG viewer is actively using this guest, even
+            // when it isn't receiving keyboard or mouse input.
+            runtime.LastUiActivityUtc = DateTime.UtcNow;
             var (seq, jpeg) = runtime.GetJpegWithSequence();
             if (jpeg is not null && seq != lastSent)
             {
@@ -1366,6 +1373,23 @@ public sealed class VmManager
                     var proc = runtime.Proc;
                     if (proc is null || runtime.Status != "running")
                         continue;
+
+                    // Park interactive desktops that have no active UI or
+                    // input requests, including VMs left unselected while
+                    // another Soil page or VM is in use. Agents/apps retain
+                    // background execution until explicitly stopped.
+                    if (string.Equals(runtime.Record.Kind, "desktop", StringComparison.OrdinalIgnoreCase) &&
+                        DateTime.UtcNow - runtime.LastUiActivityUtc > TimeSpan.FromSeconds(90) &&
+                        !runtime.ParkPending && !runtime.Deleting)
+                    {
+                        runtime.ParkPending = true;
+                        runtime.StartCts?.Cancel();
+                        runtime.StatsCts?.Cancel();
+                        runtime.Status = "stopping";
+                        _ = Task.Run(() => StopAsync(runtime, proc));
+                        continue;
+                    }
+
                     try
                     {
                         var now = DateTime.UtcNow;
@@ -2295,6 +2319,7 @@ internal sealed class VmRuntime
     internal bool Deleting;
     internal string? Error;
     internal DateTime? StartedUtc;
+    internal DateTime LastUiActivityUtc = DateTime.UtcNow;
     internal int SshPort;
     internal int McpPort;
     internal CancellationTokenSource? StatsCts;
