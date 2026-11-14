@@ -9,7 +9,6 @@ public sealed class MainForm : Form
     private readonly string m_url;
     private readonly SoilPaths m_paths;
     private readonly VmManager m_vmManager;
-    private bool m_minimized;
 
     public MainForm(string url, SoilPaths paths, VmManager vmManager)
     {
@@ -24,27 +23,6 @@ public sealed class MainForm : Form
         m_web.AllowExternalDrop = false;
         Controls.Add(m_web);
         Load += OnLoaded;
-        Resize += OnResized;
-    }
-
-    // Park running guests into snapshots while the app is minimized, then
-    // restore their saved state when the window is shown again.
-    private void OnResized(object? sender, EventArgs e)
-    {
-        var minimized = WindowState == FormWindowState.Minimized;
-        if (minimized == m_minimized)
-            return;
-        m_minimized = minimized;
-        try
-        {
-            if (minimized)
-                m_vmManager.IdleAll();
-            else
-                m_vmManager.ResumeAll();
-        }
-        catch
-        {
-        }
     }
 
     private async void OnLoaded(object? sender, EventArgs e)

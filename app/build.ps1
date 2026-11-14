@@ -67,15 +67,15 @@ Requirements
 
 Use
 - Launch Soil from the Start Menu.
-- Create machines with +, start them with the power switch, and click the screen to capture input.
+- Setup starts with no machines. Create your own VM with New VM, choose resources, press Start when ready, and click the screen to capture input.
 - Use the terminal + to create a 512 MB agent machine with Claude Code and Codex CLI, then open its SSH tunnel.
 - Agent home directories and sign-in state live on each machine data disk and survive restarts.
-- Machine boot state is snapshotted automatically and restored on subsequent starts; running machines are parked to disk while Soil is minimized.
+- Machines run until explicitly stopped, including while Soil is minimized. Data disks persist across restarts; full-memory autosnapshots are disabled for stability.
 - Sign-in pages open in the machine's built-in browser.
 - Use the branch button to import a GitHub repository into its own app machine.
 - Browse machines, apps, skills, cache, and logs from Files.
 - Machine data lives in %USERPROFILE%\.soil.
-- Private repositories use the optional GitHub OAuth Worker in app\auth-worker.
+- GitHub can be connected or reconnected from the main app with the GitHub button. Private repositories require the optional OAuth Worker in app\auth-worker.
 
 Uninstall
 - Settings > Apps > Installed apps > Soil

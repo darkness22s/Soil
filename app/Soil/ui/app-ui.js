@@ -92,6 +92,7 @@
   };
   var projsEl=document.getElementById("projs");
   var newBtn=document.getElementById("newVm");
+  var deleteBtn=document.getElementById("deleteBtn");
   var titleEl=document.getElementById("mainTitle");
   var scrDead=document.getElementById("scrDead");
   var scrCon=document.getElementById("scrCon");
@@ -142,7 +143,7 @@
   var mkRepoTrig=document.getElementById("mkRepoTrig");
   var mkRepoVal=document.getElementById("mkRepoVal");
   var mkRepoList=document.getElementById("mkRepoList");
-  var mkPkg={cpu:1,mem:0.5,label:"1 vCPU · 512 MB",size:"tiny"};
+  var mkPkg={cpu:1,mem:2,label:"1 vCPU · 2 GiB",size:"nano"};
   var mkRepo="";
   var sel=null;
   var reduced=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -752,6 +753,7 @@
           r.classList.toggle("on",r.dataset.vm===view.id);
         });
         titleEl.textContent=view.title.toUpperCase();
+        deleteBtn.hidden=false;
         updateSsh(view);
         if(changed){
           selectVm(view.id);
@@ -764,6 +766,7 @@
         sel=null;
         selectedId="";
         titleEl.textContent="NO MACHINES";
+        deleteBtn.hidden=true;
         setScreen(scrDead);
         startBtn.style.display="none";
         stbClear();
@@ -917,6 +920,21 @@
   });
   window.addEventListener("blur",releaseInput);
 
+  deleteBtn.addEventListener("click",function(){
+    if(!sel||busy){ return; }
+    var id=sel.id;
+    if(!window.confirm('Delete "'+sel.title+'" and its VM data? This cannot be undone.')){ return; }
+    busy=true;
+    api("/api/vms/"+encodeURIComponent(id),{method:"DELETE"}).then(function(){
+      selectedId="";
+      return refreshVms();
+    }).catch(function(err){
+      alert(err.message||"Could not delete the machine.");
+    }).then(function(){
+      busy=false;
+    });
+  });
+
   newBtn.addEventListener("click",function(){
     mkScrim.classList.add("on");
     mkScrim.setAttribute("aria-hidden","false");
@@ -995,10 +1013,23 @@
       addManualRepoOption();
     }).catch(function(){
       mkRepoList.innerHTML="";
+      var connect=document.createElement("button");
+      connect.type="button";
+      connect.className="mk-opt";
+      connect.textContent="Connect GitHub...";
+      connect.addEventListener("click",function(){
+        mkRepoDd.classList.remove("open");
+        mkRepoList.hidden=true;
+        if(window.SoilGitHub){ window.SoilGitHub.open(); }
+      });
+      mkRepoList.appendChild(connect);
       addManualRepoOption();
-      mkRepoVal.querySelector("i").textContent="GitHub not connected";
+      mkRepoVal.querySelector("i").textContent="Connect GitHub or use a public URL";
     });
   }
+  window.addEventListener("soil:github-connected",function(){
+    if(mkScrim.classList.contains("on")&&mkType==="apps"){ loadRepos(); }
+  });
   mkRepoList.addEventListener("click",function(e){
     var opt=e.target.closest(".mk-opt");
     if(!opt||opt.disabled){ return; }
@@ -1017,7 +1048,7 @@
     mkList.hidden=true;
     mkTrig.setAttribute("aria-expanded","false");
   });
-  var mkType="apps";
+  var mkType="lab";
   var mkAgItems=[];
   ["codex","claude","antigravity","sparky"].forEach(function(id){
     var it=document.createElement("button");
@@ -1183,9 +1214,7 @@
     request.then(function(dto){
       mkClose();
       selectedId=dto.id;
-      if(mkType!=="apps"){
-        return postJson("/api/vms/"+encodeURIComponent(dto.id)+"/start",{}).catch(function(){});
-      }
+      // New machines start only when the user explicitly presses Start.
       return null;
     }).then(function(){
       return refreshVms();
