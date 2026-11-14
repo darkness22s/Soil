@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ImagesDir,
     [int]$BootTimeoutSeconds = 180,
-    [string]$KernelCmdLine = "console=ttyS0 quiet loglevel=3 acpi=off noapic nolapic mitigations=off nozswap idle=poll nodhcp nofstab",
+    [string]$KernelCmdLine = "console=ttyS0 quiet loglevel=3 acpi=off noapic nolapic mitigations=off nozswap idle=poll",
     [switch]$SkipBuild
 )
 
