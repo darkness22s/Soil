@@ -26,6 +26,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+try:
+    from . import native_apps
+except ImportError:  # Direct execution: python3 app/linux/soil.py
+    import native_apps
+
 HERE = Path(__file__).resolve().parent
 UI_DIR = HERE / "ui" if (HERE / "ui" / "app.html").is_file() else HERE.parent / "Soil" / "ui"
 SKILL_FILE = (HERE / "skill" / "soil-control" / "SKILL.md"
@@ -130,6 +135,45 @@ class LinuxHost:
             self.save()
             return self._dto(machine)
 
+    def create_native(self, filename: str, content: object, length: int) -> dict:
+        """Import a local ELF/AppImage without executing it or starting a session."""
+        if (not filename or len(filename) > 128 or
+                any(c in filename for c in ("/", "\\", "\x00"))):
+            raise SoilError("Supply a simple local filename.")
+        if not (1 <= length <= native_apps.MAX_NATIVE_BYTES):
+            raise SoilError("Native app must be between 1 byte and 256 MiB.")
+        with self.lock:
+            mid = uuid.uuid4().hex
+            folder = self.home / "apps" / mid
+            folder.mkdir(mode=0o700, parents=True)
+            suffix = ".AppImage" if filename.lower().endswith(".appimage") else ".elf"
+            target = folder / ("app" + suffix)
+            try:
+                with target.open("xb") as output:
+                    remaining = length
+                    while remaining:
+                        chunk = content.read(min(128 * 1024, remaining))
+                        if not chunk:
+                            raise SoilError("Native app upload ended early.")
+                        output.write(chunk)
+                        remaining -= len(chunk)
+                native_apps.validate_binary(target)
+                target.chmod(0o700)
+                name = Path(filename).stem.strip()[:40] or "Linux app"
+                machine = {
+                    "id": mid, "name": name, "size": "native", "kind": "app",
+                    "os": "Linux native (host)", "sourceType": "linux-native",
+                    "nativeFile": filename, "nativePath": target.name,
+                    "ramMb": 0, "cpu": 0, "diskGb": 0, "createdUtc": utcnow(),
+                }
+                self.machines[mid] = machine
+                self.save()
+                return self._dto(machine)
+            except Exception:
+                self.machines.pop(mid, None)
+                shutil.rmtree(folder, ignore_errors=True)
+                raise
+
     def _dto(self, machine: dict) -> dict:
         mid = machine["id"]
         runtime = self.running.get(mid)
@@ -137,13 +181,14 @@ class LinuxHost:
         error = None
         uptime = 0
         if runtime:
-            if runtime["qemu"].poll() is None:
+            primary = runtime.get("app") or runtime.get("qemu")
+            if primary.poll() is None:
                 status = "running"
                 uptime = int(time.monotonic() - runtime["started"])
                 if runtime["websockify"].poll() is not None:
                     error = "The browser console disconnected. Check the VM log."
             else:
-                error = "QEMU exited with code " + str(runtime["qemu"].returncode)
+                error = ("Linux app" if "app" in runtime else "QEMU") + " exited with code " + str(primary.returncode)
                 self._cleanup(mid)
         return {
             "id": mid, "name": machine.get("name", "Machine"),
@@ -153,7 +198,9 @@ class LinuxHost:
             "os": machine.get("os", "Soil Desktop"),
             "uptimeSec": uptime, "error": error, "series": [],
             "kind": machine.get("kind", "desktop"),
-            "app": None, "agent": None,
+            "app": ({"status": "ready" if status == "running" else "stopped", "repoUrl": None}
+                    if machine.get("sourceType") == "linux-native" else None),
+            "agent": None,
         }
 
     def list(self) -> list[dict]:
@@ -203,8 +250,10 @@ class LinuxHost:
         runtime = self.running.pop(mid, None)
         if not runtime:
             return
-        for name in ("websockify", "qemu"):
-            process = runtime[name]
+        for name in ("websockify", "vnc", "window_manager", "app", "qemu", "xvfb"):
+            process = runtime.get(name)
+            if process is None:
+                continue
             if process.poll() is None:
                 process.terminate()
                 try:
@@ -220,10 +269,21 @@ class LinuxHost:
             machine = self.machines.get(mid)
             if not machine:
                 return None
-            if machine.get("kind", "desktop") != "desktop":
-                raise SoilError("The Linux preview currently starts desktop VMs only.")
             if mid in self.running:
                 return self._dto(machine)
+            if machine.get("sourceType") == "linux-native" and machine.get("kind") == "app":
+                appdir = self.home / "apps" / mid
+                try:
+                    runtime = native_apps.start(
+                        appdir / machine["nativePath"], appdir / "home",
+                        self.home / "machines" / mid / "logs" / "app.log",
+                        machine["nativeFile"])
+                except native_apps.NativeAppError as exc:
+                    raise SoilError(str(exc)) from exc
+                self.running[mid] = runtime
+                return self._dto(machine)
+            if machine.get("kind", "desktop") != "desktop":
+                raise SoilError("This Linux host cannot start the requested machine type.")
             qemu, qemu_img, ws, novnc = self.requirements()
             images = self.image_dir()
             folder = self.home / "machines" / mid
@@ -302,7 +362,7 @@ class LinuxHost:
             if mid not in self.machines or mid not in self.running:
                 return None
             runtime = self.running[mid]
-            if runtime["qemu"].poll() is not None:
+            if (runtime.get("app") or runtime.get("qemu")).poll() is not None:
                 self._cleanup(mid)
                 return None
             return ("http://127.0.0.1:" + str(runtime["websocket_port"])
@@ -316,13 +376,14 @@ class LinuxHost:
             runtime = self.running.get(mid)
             if not runtime:
                 return self._dto(machine)
-            # Give the guest a chance to shut down cleanly before terminating QEMU.
-            qemu = runtime["qemu"]
-            try:
-                _qmp_powerdown(runtime["monitor"])
-                qemu.wait(timeout=4)
-            except (OSError, TimeoutError, subprocess.TimeoutExpired, ValueError):
-                pass
+            if "qemu" in runtime:
+                # Give the guest a chance to shut down cleanly before terminating QEMU.
+                qemu = runtime["qemu"]
+                try:
+                    _qmp_powerdown(runtime["monitor"])
+                    qemu.wait(timeout=4)
+                except (OSError, TimeoutError, subprocess.TimeoutExpired, ValueError):
+                    pass
             self._cleanup(mid)
             return self._dto(machine)
 
@@ -336,6 +397,9 @@ class LinuxHost:
             folder = self.home / "machines" / mid
             if folder.is_dir():
                 shutil.rmtree(folder)
+            appdir = self.home / "apps" / mid
+            if appdir.is_dir():
+                shutil.rmtree(appdir)
             return True
 
     def stop_all(self) -> None:
@@ -482,6 +546,17 @@ class Handler(BaseHTTPRequestHandler):
                         return self._send(404, {"error": "Linux uses the noVNC console."})
                 return self._static(path)
             if self.command == "POST":
+                if path == "/api/apps/native":
+                    if self.headers.get("Content-Type", "").split(";")[0].lower() != "application/octet-stream":
+                        return self._send(415, {"error": "Expected application/octet-stream."})
+                    try:
+                        length = int(self.headers.get("Content-Length", "0"))
+                    except ValueError:
+                        return self._send(400, {"error": "Invalid request length."})
+                    if length < 1 or length > native_apps.MAX_NATIVE_BYTES:
+                        return self._send(413, {"error": "Linux native app limit is 256 MiB."})
+                    filename = unquote(self.headers.get("X-Soil-Filename", ""))
+                    return self._send(200, host.create_native(filename, self.rfile, length))
                 body = self._json_body()
                 if path == "/api/ui":
                     self.server.ui_state.update({k: body[k] for k in ("purpose", "agents", "package", "theme")
@@ -514,7 +589,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self._send(200, {"id": parts[2], "deleted": True})
                 return self._send(404, {"error": "Machine not found."})
             return self._send(405, {"error": "Method not allowed."})
-        except SoilError as exc:
+        except (SoilError, native_apps.NativeAppError) as exc:
             return self._send(400, {"error": str(exc)})
         except (OSError, subprocess.SubprocessError) as exc:
             self.log_message("error: %s", exc)
