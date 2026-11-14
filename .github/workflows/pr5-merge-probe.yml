@@ -1,0 +1,33 @@
+name: PR 5 integration conflict probe
+
+on:
+  push:
+    branches: [feat/soil-organization]
+    paths: ['.github/workflows/pr5-merge-probe.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Probe merge without modifying the branch
+        shell: bash
+        run: |
+          git config user.name "Soil integration probe"
+          git config user.email "integration-probe@users.noreply.github.com"
+          git fetch origin main
+          git merge --no-commit --no-ff origin/main > /tmp/merge-out.txt 2>&1 || true
+          cat /tmp/merge-out.txt
+          echo '--- Unresolved files ---'
+          git diff --name-only --diff-filter=U
+          echo '--- Conflict marker contexts ---'
+          git diff --name-only --diff-filter=U | while IFS= read -r path; do
+            echo "### $path"
+            grep -n -C 5 -e '^<<<<<<<' -e '^=======$' -e '^>>>>>>>' "$path" | head -n 200 || true
+          done
+          git merge --abort || true
