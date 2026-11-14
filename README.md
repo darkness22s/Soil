@@ -4,6 +4,10 @@ Soil is a local Windows host for small virtual machines and local apps. It runs
 soil guest images, keeps machine state and user content under `~/.soil`, and
 includes a Files view for browsing that home without leaving the app.
 
+An early Apple Silicon macOS launcher is available under `app/macos`. It uses
+QEMU software emulation for the x86_64 guest and does not yet provide the Windows
+host's feature set. See [`app/macos/README.md`](app/macos/README.md) before use.
+
 This repository is a private build. Do not redistribute the installer or build
 artifacts yet.
 
