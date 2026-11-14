@@ -2,6 +2,12 @@ using System.IO.Compression;
 using System.Text;
 using Soil;
 
+if (args.Length == 4 && args[0] == "--prepare")
+{
+    Console.WriteLine(GuestInitrd.Prepare(args[1], args[2], args[3]));
+    return;
+}
+
 if (args.Length != 1 || !File.Exists(args[0]))
     throw new ArgumentException("Provide published core2.gz path.");
 
