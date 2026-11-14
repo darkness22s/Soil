@@ -1045,7 +1045,7 @@ public sealed class VmManager
             psi.ArgumentList.Add(runtime.Record.RamMb.ToString());
             Directory.CreateDirectory(m_paths.MachineLogDir(runtime.Record.Id));
             psi.ArgumentList.Add("--cmdline");
-            psi.ArgumentList.Add("console=ttyS0 quiet loglevel=3 acpi=off noapic nolapic mitigations=off nozswap idle=poll");
+            psi.ArgumentList.Add("console=ttyS0 quiet loglevel=3 acpi=off noapic nolapic mitigations=off nozswap idle=poll io_delay=none");
             psi.ArgumentList.Add("--log");
             psi.ArgumentList.Add(m_paths.MachineLogPath(runtime.Record.Id));
             psi.ArgumentList.Add("--no-ui");
