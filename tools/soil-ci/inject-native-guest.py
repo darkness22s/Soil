@@ -48,9 +48,9 @@ def check_archive(cpio: bytes) -> None:
     offset = 0
     trailer_seen = False
     while offset < len(cpio):
-        if cpio[offset:] == b"\0" * (len(cpio) - offset):
-            break
         if offset + 110 > len(cpio) or cpio[offset : offset + 6] not in MAGIC:
+            if not any(cpio[offset:]):
+                break
             raise ValueError("Bundled core2.gz does not contain a supported newc cpio archive.")
         fields = []
         try:
