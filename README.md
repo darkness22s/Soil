@@ -9,10 +9,13 @@ QEMU software emulation for the x86_64 guest and does not yet provide the Window
 host's feature set. See [`app/macos/README.md`](app/macos/README.md) before use.
 
 A Linux x86_64 host preview is under [`app/linux`](app/linux/README.md). It serves
-`app.html` in your browser and runs guest VMs with QEMU/KVM and noVNC. It is a
-separate launcher, with partial feature parity; use `bash app/linux/build.sh`
-to produce the Linux tarball and see the Linux README for dependencies and
-limitations.
+`app.html` in your browser and runs guest VMs with QEMU/KVM and noVNC. In the
+Linux launcher, **Install Linux from ISO** creates a VM with a blank persistent
+QCOW2 disk, boots a bootable x86_64 Linux installer ISO inside the VM, and
+boots from the disk on subsequent starts. This is currently **Linux-host only**;
+the Windows WHPX VM engine cannot boot generic ISO installers yet. Use
+`bash app/linux/build.sh` for the Linux tarball; see the Linux README for the
+boot workflow and limitations.
 
 This repository is a private build. Do not redistribute the installer or build
 artifacts yet.
