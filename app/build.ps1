@@ -70,7 +70,7 @@ Use
 - Setup starts with no machines. Create your own VM with New VM, choose resources, press Start when ready, and click the screen to capture input.
 - Use the terminal + to create a 512 MB agent machine with Claude Code and Codex CLI, then open its SSH tunnel.
 - Agent home directories and sign-in state live on each machine data disk and survive restarts.
-- Machines run until explicitly stopped, including while Soil is minimized. Data disks persist across restarts; full-memory autosnapshots are disabled for stability.
+- Desktop machines park after 90 seconds without use or when the app stays unfocused. A parked machine writes a checkpoint and fully exits, releasing guest CPU and RAM. It restarts only when requested. Background app/agent workers are not automatically parked on UI focus loss. Data disks persist.
 - Sign-in pages open in the machine's built-in browser.
 - Use the branch button to import a GitHub repository into its own app machine.
 - Browse machines, apps, skills, cache, and logs from Files.
