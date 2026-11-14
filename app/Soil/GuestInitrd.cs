@@ -73,10 +73,19 @@ internal static class GuestInitrd
             using (var output = File.Create(temporary))
             using (var gzip = new GZipStream(output, CompressionLevel.Optimal))
             {
-                unzip.CopyTo(gzip);
-                // cpio entries must start on a 4-byte boundary. The Tiny Core
-                // original already ends aligned to cpio / 512-byte padding.
-                // Guest initramfs is a newc stream, not ISO9660.
+                // Append a second newc archive to the existing initramfs.
+                // Linux supports concatenated newc archives, separated by
+                // zero padding, but each header must start 4-byte aligned.
+                var buffer = new byte[128 * 1024];
+                long copied = 0;
+                int read;
+                while ((read = unzip.Read(buffer)) > 0)
+                {
+                    gzip.Write(buffer.AsSpan(0, read));
+                    copied += read;
+                }
+                for (var pad = (int)(-copied & 3); pad > 0; pad--)
+                    gzip.WriteByte(0);
                 gzip.Write(Entry("home/tc/.ssh", Array.Empty<byte>(), 0x41c0, 91011)); // 040700
                 gzip.Write(Entry("home/tc/.ssh/authorized_keys",
                                  Encoding.ASCII.GetBytes(publicKey + "\n"),
