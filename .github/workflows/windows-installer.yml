@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-installer:
@@ -44,9 +44,50 @@ jobs:
         run: |
           node --check .\app\Soil\ui\app.js
           node --check .\app\Soil\ui\app-ui.js
+          node --check .\app\Soil\ui\skill-ui.js
+          node --test .\tools\soil-ci\skill-ui.test.mjs
           node --check .\app\Soil\ui\onboarding.js
           node --check .\app\auth-worker\src\index.js
           node --check .\tools\soil-ci\soil-ci.mjs
+
+
+      - name: Verify bundled machine images and Skill UI
+        shell: pwsh
+        run: |
+          $root = Join-Path $PWD 'app/dist/Soil'
+          foreach ($entry in @(
+            @{ Name='images/vmlinuz64'; Minimum=7000000 },
+            @{ Name='images/core2.gz'; Minimum=18000000 },
+            @{ Name='images/soil.squashfs'; Minimum=400000000 },
+            @{ Name='ui/app.html'; Minimum=20000 },
+            @{ Name='ui/skill-ui.js'; Minimum=1000 },
+            @{ Name='skill/soil-control/SKILL.md'; Minimum=100 }
+          )) {
+            $path = Join-Path $root $entry.Name
+            if (-not (Test-Path -LiteralPath $path)) { throw "Missing installer payload: $($entry.Name)" }
+            $actual = (Get-Item -LiteralPath $path).Length
+            if ($actual -lt $entry.Minimum) { throw "Truncated installer payload: $($entry.Name) ($actual bytes)" }
+            Write-Host "$($entry.Name): $actual bytes"
+          }
+          $msi = Get-ChildItem app/dist/Soil-*-x64.msi | Select-Object -First 1
+          if (-not $msi -or $msi.Length -lt 300MB) { throw 'Missing or unexpectedly small bundled-image MSI' }
+          Write-Host "Verified MSI: $($msi.Name) ($($msi.Length) bytes)"
+
+      - name: Publish requested private installer as a GitHub pre-release
+        if: github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[private-installer]')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem app/dist/Soil-*-x64.msi | Select-Object -First 1
+          if (-not $msi) { throw 'MSI is missing' }
+          $short = $env:GITHUB_SHA.Substring(0, 12)
+          $tag = "soil-4.2.1-skill-ui-$short"
+          $name = 'Soil 4.2.1 - Skill UI and bundled VM images (private preview)'
+          $notes = 'Private repository build for personal testing. Includes the Soil Windows host, VM engine, vmlinuz64, core2.gz, soil.squashfs, and working Skill installation UI. Windows 10/11 x64 with WHPX and WebView2 required. Not for public redistribution.'
+          gh release create $tag $msi.FullName --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title $name --notes $notes --prerelease --latest=false
+          if ($LASTEXITCODE -ne 0) { throw 'Private installer release publication failed' }
+          Write-Host "Installer release: https://github.com/$env:GITHUB_REPOSITORY/releases/tag/$tag"
 
       - name: Upload installer
         id: installer-upload
