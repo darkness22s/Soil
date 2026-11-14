@@ -16,7 +16,7 @@ import tempfile
 from pathlib import Path
 
 MAGIC = (b"070701", b"070702")
-GUEST_PATH = "usr/local/bin/soil-native"
+GUEST_PATH = "bin/soil-native"
 
 
 def align4(data: bytes) -> bytes:
