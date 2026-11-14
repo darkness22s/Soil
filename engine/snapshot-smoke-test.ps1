@@ -119,6 +119,9 @@ function Stop-GuestClean {
     $profile = Get-Content -LiteralPath $script:activeLogPath |
         Select-String 'vmhost: stopped after' | Select-Object -Last 1
     if ($profile) { Write-Host ("VM exit profile: " + $profile.Line) }
+    $hotPorts = Get-Content -LiteralPath $script:activeLogPath |
+        Select-String 'io: hot ports' | Select-Object -Last 1
+    if ($hotPorts) { Write-Host ("VM I/O profile: " + $hotPorts.Line) }
     $script:live.Dispose()
     $script:live = $null
 }
