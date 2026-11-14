@@ -70,7 +70,7 @@ for attempt in $(seq 1 90); do
     echo "Soil guest QEMU exited prematurely" >&2
     break
   fi
-  if ssh "${ssh_opts[@]}" tc@127.0.0.1 "command -v soil-native && id -un" >/dev/null 2>&1; then
+  if ssh "${ssh_opts[@]}" tc@127.0.0.1 "id -un" >/dev/null 2>&1; then
     reachable=1
     break
   fi
@@ -84,6 +84,12 @@ if [[ "$reachable" != 1 ]]; then
   grep -Ei 'eth|dhcp|network|dropbear|ssh|pubkey' "$tmp/serial.log" | tail -n 60 >&2 || true
   tail -n 100 "$tmp/serial.log" >&2 || true
   tail -n 100 "$tmp/qemu.log" >&2 || true
+  exit 1
+fi
+
+if ! ssh "${ssh_opts[@]}" tc@127.0.0.1 "test -x /bin/soil-native && command -v soil-native"; then
+  echo "Guest authenticated SSH, but native launcher is missing from rootfs." >&2
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 "ls -l /bin/soil-native /usr/bin/soil-native /usr/local/bin/soil-native 2>&1; mount | grep -E '/usr/local|/bin' || true" >&2 || true
   exit 1
 fi
 
