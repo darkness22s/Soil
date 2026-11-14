@@ -84,8 +84,7 @@ Git LFS images and a suitable virtualization-capable runner.
 
 ## Agent computer-use API (Linux VMs)
 
-On-demand computer control uses the preexisting MIT-licensed [vncdotool]
-(https://github.com/sibson/vncdotool) VNC/RFB automation library, bundled in
+On-demand computer control uses the preexisting MIT-licensed [vncdotool](https://github.com/sibson/vncdotool) VNC/RFB automation library, bundled in
 the Linux tarball. The `vncdotool` CLI is started only for the duration of an
 API request. The app creates no VM or automation process until requested.
 
@@ -119,5 +118,8 @@ stopped VMs return 409 and do **not** wake them. Agents should request
 a screenshot after acting and verify the intended result.
 
 Builds vendor `vncdotool==1.4.2` with dependencies and licenses into the tarball.
+Because these wheels can contain native extensions, use Python **3.12** for the
+published Ubuntu 24.04 artifact. If building on a different Linux distribution
+or Python version, run `build.sh` there to vendor compatible wheels.
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The browser's ordinary
 noVNC console continues to work independently of the agent API.
