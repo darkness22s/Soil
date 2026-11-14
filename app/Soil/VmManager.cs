@@ -1043,7 +1043,12 @@ public sealed class VmManager
             psi.ArgumentList.Add("--kernel");
             psi.ArgumentList.Add(Path.Combine(m_imagesDir, "vmlinuz64"));
             psi.ArgumentList.Add("--initrd");
-            psi.ArgumentList.Add(Path.Combine(m_imagesDir, "core2.gz"));
+            var initrd = Path.Combine(m_imagesDir, "core2.gz");
+            if (!string.IsNullOrEmpty(m_sshKeyPath) &&
+                File.Exists(m_sshKeyPath + ".pub"))
+                initrd = GuestInitrd.Prepare(initrd, m_paths.MachineDir(runtime.Record.Id),
+                                            m_sshKeyPath + ".pub");
+            psi.ArgumentList.Add(initrd);
             psi.ArgumentList.Add("--disk");
             psi.ArgumentList.Add(Path.Combine(m_imagesDir, "soil.squashfs"));
             var dataGb = runtime.Record.DiskGb > 0 ? runtime.Record.DiskGb : 40;
@@ -1786,7 +1791,7 @@ public sealed class VmManager
                 using var memory = new MemoryStream();
                 stream.CopyTo(memory);
                 var bytes = memory.ToArray();
-                if (!File.Exists(path) || !File.ReadAllBytes(path).SequenceEqual(bytes))
+                if (!File.Exists(path))
                     File.WriteAllBytes(path, bytes);
             }
 
@@ -1800,8 +1805,43 @@ public sealed class VmManager
             }
 
             if (!File.Exists(path))
-                return "";
+            {
+                // Fresh installations have no private key bundled. Generate a
+                // per-user key; only its public half will enter guest images.
+                var generator = new ProcessStartInfo
+                {
+                    FileName = FindExecutable("ssh-keygen.exe"),
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+                foreach (var arg in new[] { "-q", "-t", "ed25519", "-f", path,
+                                             "-N", "", "-C", "soil-local" })
+                    generator.ArgumentList.Add(arg);
+                using var created = Process.Start(generator);
+                if (created is null || !created.WaitForExit(15000) || created.ExitCode != 0)
+                    return "";
+            }
             RestrictKeyPermissions(path);
+            if (!File.Exists(path + ".pub"))
+            {
+                var exporter = new ProcessStartInfo
+                {
+                    FileName = FindExecutable("ssh-keygen.exe"),
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+                exporter.ArgumentList.Add("-y");
+                exporter.ArgumentList.Add("-f");
+                exporter.ArgumentList.Add(path);
+                using var export = Process.Start(exporter);
+                if (export is null || !export.WaitForExit(10000) || export.ExitCode != 0)
+                    return "";
+                File.WriteAllText(path + ".pub", export.StandardOutput.ReadToEnd());
+            }
             return path;
         }
         catch
