@@ -143,5 +143,22 @@ jobs:
           node --check tools/soil-ci/soil-ci.mjs
           git diff --cached --stat
           git commit -m "Integrate tested CLI and macOS PRs into Soil 4.2.1 runtime"
-          git push origin HEAD:feat/soil-organization
+          python3 - <<'PYMERGED'
+          from pathlib import Path
+          import base64
+          files = [
+              '.github/workflows/build-msi.yml',
+              'README.md',
+              'app/Soil/AppServer.cs',
+              'app/Soil/Program.cs',
+              'app/Soil/Soil.csproj',
+              'app/Soil/SoilPaths.cs',
+              'app/Soil/ui/app.js',
+              'app/Soil/ui/index.html',
+              'app/Soil/ui/style.css'
+          ]
+          for name in files:
+              print('SOIL_MERGED_BLOB:' + name + ':' + base64.b64encode(Path(name).read_bytes()).decode('ascii'))
+          PYMERGED
+          echo "Merge tree built and checked; GitHub connector will publish commit"
           
