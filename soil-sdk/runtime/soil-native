@@ -1,0 +1,87 @@
+#!/bin/sh
+# Guest-only native Linux app launcher baked into core2.gz by Soil's build.
+# Apps arrive over the existing SSH tunnel; never execute on Windows.
+set -eu
+
+usage() {
+    echo "usage: soil-native install ID FILE [DISPLAY_NAME] | launch ID | remove ID | list" >&2
+    exit 2
+}
+id_ok() {
+    case "$1" in
+        ""|*[!a-z0-9_-]*) return 1 ;;
+        *) [ "${#1}" -le 64 ] ;;
+    esac
+}
+native_root="${HOME:-/home/tc}/.local/share/soil/native"
+[ "$#" -ge 1 ] || usage
+action=$1
+shift
+case "$action" in
+    install)
+        [ "$#" -ge 2 ] && [ "$#" -le 3 ] || usage
+        id=$1
+        source=$2
+        name=${3:-$id}
+        id_ok "$id" || { echo "soil-native: invalid app ID" >&2; exit 2; }
+        [ -f "$source" ] || { echo "soil-native: app file not found" >&2; exit 1; }
+        dir="$native_root/$id"
+        mkdir -p "$dir" "$HOME/.local/share/applications"
+        # Atomically replace the executable; never interpret its filename.
+        cp "$source" "$dir/.incoming"
+        chmod 700 "$dir/.incoming"
+        mv -f "$dir/.incoming" "$dir/app"
+        name=$(printf '%s' "$name" | tr '\r\n' '  ' | cut -c1-60)
+        cat > "$HOME/.local/share/applications/soil-native-$id.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=$name
+Comment=Native Linux application in Soil
+Exec=/usr/local/bin/soil-native launch $id
+Terminal=false
+Categories=Utility;
+EOF
+        echo "installed $id"
+        ;;
+    launch)
+        [ "$#" -eq 1 ] || usage
+        id=$1
+        id_ok "$id" || { echo "soil-native: invalid app ID" >&2; exit 2; }
+        dir="$native_root/$id"
+        [ -x "$dir/app" ] || { echo "soil-native: $id is not installed" >&2; exit 1; }
+        export DISPLAY="${DISPLAY:-:0}"
+        export GDK_BACKEND=x11
+        export LIBGL_ALWAYS_SOFTWARE=1
+        export APPIMAGE_EXTRACT_AND_RUN=1
+        export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/xdg-${USER:-tc}}"
+        mkdir -p "$XDG_RUNTIME_DIR"
+        chmod 700 "$XDG_RUNTIME_DIR"
+        nohup "$dir/app" >"$dir/launch.log" 2>&1 </dev/null &
+        pid=$!
+        sleep 1
+        if ! kill -0 "$pid" 2>/dev/null; then
+            echo "soil-native: process exited during startup" >&2
+            tail -n 15 "$dir/launch.log" >&2 || true
+            exit 1
+        fi
+        echo "launched $id pid=$pid"
+        ;;
+    remove)
+        [ "$#" -eq 1 ] || usage
+        id=$1
+        id_ok "$id" || { echo "soil-native: invalid app ID" >&2; exit 2; }
+        rm -rf "$native_root/$id"
+        rm -f "$HOME/.local/share/applications/soil-native-$id.desktop"
+        echo "removed $id"
+        ;;
+    list)
+        [ "$#" -eq 0 ] || usage
+        if [ -d "$native_root" ]; then
+            for d in "$native_root"/*; do
+                [ -x "$d/app" ] || continue
+                basename "$d"
+            done
+        fi
+        ;;
+    *) usage ;;
+esac
