@@ -99,18 +99,31 @@ and releases the VM. Closing Soil stops all remaining VMs.
 A true end-to-end boot from an exited process **cannot be guaranteed under
 5 milliseconds**: host process launch, WHPX setup, snapshot I/O, network
 startup, and guest readiness all have costs. The engine reports the internal
-snapshot restore duration separately from end-to-end guest-ready time. To
-measure on a trusted Windows x64 machine with WHPX and real guest images:
+snapshot restore duration separately from end-to-end guest-ready time.
+
+Interactive **desktop** machines now show their first *guest-drawn frame*
+without waiting for a separate SSH login/desktop-process probe, including when
+SSH forwarding is configured. Agent and app worker machines still wait for
+service readiness. **First drawn pixels are not proof that SSH, the desktop
+window manager, or every guest application is ready.**
+
+For realistic timings, run the genuine Windows WHPX guest smoke with a
+per-machine writable data disk:
 
 ```powershell
 .\engine\snapshot-smoke-test.ps1 -ImagesDir .\app\images
 ```
 
-This test verifies guest SSH readiness, checkpoint creation, full engine exit,
-snapshot restore, and repeat checkpoint. It can also run in the
-`soil-vm-smoke.yml` workflow using a self-hosted `soil-whpx` Windows runner.
-These timings are not validated by GitHub's ordinary Windows build runner,
-which is unsuitable for nested-virtualization measurements.
+The Windows 2025 CI verification workflow
+(`.github/workflows/whpx-runtime-verification.yml`) tests a real guest,
+cold SSH readiness, checkpoint creation, full engine exit, snapshot recall,
+and the Soil app's Start/Idle/Recall/Stop lifecycle with SSH forwarding
+enabled. On representative November 2026 CI runs, a cold SSH-ready boot with
+a 40-GB sparse data disk took approximately **4.2 seconds**, a stored
+checkpoint restored to SSH readiness in approximately **0.6 seconds**, and
+first visible guest drawing in the app took approximately **1.2–1.9 seconds**.
+These are per-run measurements, not a promise across devices. **Under two
+seconds for full first-ever Linux/SSH readiness is not yet achieved.**
 
 ## Build cache
 
