@@ -39,9 +39,11 @@ function Test-SshBanner([int]$port) {
     $client = [Net.Sockets.TcpClient]::new()
     try {
         $connect = $client.ConnectAsync("127.0.0.1", $port)
-        if (-not $connect.Wait(1000) -or -not $client.Connected) { return $false }
+        # Do not let a pre-ready forwarding socket stall the benchmark for
+        # 1.5 seconds on each unsuccessful probe; keep the actual banner check.
+        if (-not $connect.Wait(250) -or -not $client.Connected) { return $false }
         $stream = $client.GetStream()
-        $stream.ReadTimeout = 1500
+        $stream.ReadTimeout = 250
         $reader = [IO.StreamReader]::new($stream)
         try { return $reader.ReadLine() -match '^SSH-2\.0-' }
         finally { $reader.Dispose() }
