@@ -353,9 +353,18 @@
   }
 
   btn0.addEventListener('click', () => {
-    postJson('/api/ui', { purpose: purpose }).catch(() => {});
-    if (purpose === 'agents') switchToGithub();
-    else straightCreate();
+    // Onboarding configures the workspace; VM creation stays user-initiated.
+    btn0.disabled = true;
+    statusEl.textContent = 'Opening your empty workspace...';
+    postJson('/api/ui', {
+      onboardingComplete: true,
+      purpose: purpose,
+      theme: rootEl.classList.contains('dark') ? 'dark' : 'light'
+    }).then(() => { window.location.href = 'app.html'; })
+      .catch(error => {
+        btn0.disabled = false;
+        statusEl.textContent = error && error.message ? error.message : 'Could not finish setup.';
+      });
   });
 
   function straightCreate() {
@@ -474,59 +483,16 @@
     });
   });
 
-  btn2.addEventListener('click', e => {
-    if (!chosen) {
-      ddt.classList.remove('shake');
-      void ddt.offsetWidth;
-      ddt.classList.add('shake');
-      const [dx, dy] = centerOf(ddt);
-      waves.push({ x: dx, y: dy, t: performance.now() });
-      openMenu();
-      statusEl.textContent = 'Pick a repository first.';
-      return;
-    }
-    flowX = e.clientX || null; flowY = e.clientY || null;
-    if (flowX === 0 && flowY === 0) { flowX = null; flowY = null; }
-    let appId = null;
-    const parts = chosen.split('/');
-    runFlow(
-      btn2, bloom2, 'All set', 1500,
-      () => launchApp(btn2, appId, { package: 'tiny' }),
-      'Creating your machine...',
-      () => postJson('/api/apps', {
-        name: parts[1] || 'app',
-        repoUrl: 'https://github.com/' + chosen,
-        owner: parts[0] || '',
-        repo: parts[1] || '',
-        ref: null,
-        size: 'tiny'
-      }).then(dto => { appId = dto.id; })
-    );
+  // Preserve legacy setup screens without provisioning unrequested machines.
+  btn2.addEventListener('click', () => {
+    if (!chosen) { statusEl.textContent = 'Choose a repository first.'; return; }
+    launchApp(btn2, null, { package: 'nano' });
   });
 
-  btn3.addEventListener('click', e => {
+  btn3.addEventListener('click', () => {
     const picked = agmBtns.filter(x => x.getAttribute('aria-checked') === 'true').map(x => x.dataset.id);
-    if (picked.length === 0) {
-      agList.classList.remove('shake');
-      void agList.offsetWidth;
-      agList.classList.add('shake');
-      const [gx, gy] = centerOf(agList);
-      waves.push({ x: gx, y: gy, t: performance.now() });
-      statusEl.textContent = 'Pick at least one agent.';
-      return;
-    }
-    flowX = e.clientX || null; flowY = e.clientY || null;
-    if (flowX === 0 && flowY === 0) { flowX = null; flowY = null; }
-    let agentId = null;
-    runFlow(
-      btn3, bloom3, 'All set', 1500,
-      () => launchApp(btn3, agentId, { agents: picked, package: 'tiny' }),
-      'Creating your machine...',
-      () => postJson('/api/agents', { name: 'cloud-agents' }).then(dto => {
-        agentId = dto.id;
-        return postJson('/api/vms/' + encodeURIComponent(dto.id) + '/start', {}).catch(() => null);
-      })
-    );
+    if (!picked.length) { statusEl.textContent = 'Choose at least one agent.'; return; }
+    launchApp(btn3, null, { agents: picked, package: 'nano' });
   });
 
   const pkgDd = document.getElementById('pkgDd');
@@ -598,32 +564,9 @@
     });
   });
 
-  btn4.addEventListener('click', e => {
-    if (!chosenPkg) {
-      pkgTrig.classList.remove('shake');
-      void pkgTrig.offsetWidth;
-      pkgTrig.classList.add('shake');
-      const [gx, gy] = centerOf(pkgTrig);
-      waves.push({ x: gx, y: gy, t: performance.now() });
-      statusEl.textContent = 'Pick a package first.';
-      return;
-    }
-    flowX = e.clientX || null; flowY = e.clientY || null;
-    if (flowX === 0 && flowY === 0) { flowX = null; flowY = null; }
-    const size = chosenPkgSize || 'tiny';
-    let machineId = null;
-    runFlow(
-      btn4, bloom4, 'All set', 1500,
-      () => launchApp(btn4, machineId, { package: size }),
-      'Creating your machine...',
-      () => postJson('/api/vms', {
-        name: purpose === 'testing' ? 'test-machine' : 'linux-machine',
-        size: size
-      }).then(dto => {
-        machineId = dto.id;
-        return postJson('/api/vms/' + encodeURIComponent(dto.id) + '/start', {}).catch(() => null);
-      })
-    );
+  btn4.addEventListener('click', () => {
+    if (!chosenPkg) { statusEl.textContent = 'Pick a package first.'; return; }
+    launchApp(btn4, null, { package: chosenPkgSize || 'nano' });
   });
 
   function launchApp(fromBtn, id, extra) {
