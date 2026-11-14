@@ -1462,7 +1462,8 @@ int VhSnapLazyLoad(VH_VM *pVm, u64 uGpa)
     u64 cbChunk = pVm->mem.cbRam - uOff;
     if (cbChunk > VH_LAZY_CHUNK)
         cbChunk = VH_LAZY_CHUNK;
-    if (!(pVm->pbRamLoaded[iChunk >> 3] & (1u << (iChunk & 7))))
+    if (pVm->pbRamLoaded[iChunk >> 3] & (1u << (iChunk & 7)))
+        return 0; /* already loaded and mapped, including overlapping prefetches */
     {
         if (_fseeki64(pVm->pFileLazy, (LONGLONG)(SNAP_RAM_OFF + uOff), SEEK_SET) ||
             fread(pVm->mem.pbRam + uOff, 1, (size_t)cbChunk, pVm->pFileLazy) != (size_t)cbChunk)
@@ -1470,10 +1471,10 @@ int VhSnapLazyLoad(VH_VM *pVm, u64 uGpa)
             VhLog("snap: lazy page-in read failed @ GPA %#llx", (unsigned long long)uGpa);
             return 1;
         }
+        if (VhWhvMapRamChunk(pVm, uOff, pVm->mem.pbRam + uOff, cbChunk))
+            return 1;
         pVm->pbRamLoaded[iChunk >> 3] |= (u8)(1u << (iChunk & 7));
         pVm->cLazyChunks++;
     }
-    if (VhWhvMapMmioPage(pVm, uOff, pVm->mem.pbRam + uOff, cbChunk))
-        return 1;
     return 0;
 }
