@@ -9,6 +9,7 @@ public sealed class MainForm : Form
     private readonly string m_url;
     private readonly SoilPaths m_paths;
     private readonly VmManager m_vmManager;
+    private readonly System.Windows.Forms.Timer m_idleTimer = new() { Interval = 90_000 };
 
     public MainForm(string url, SoilPaths paths, VmManager vmManager)
     {
@@ -23,6 +24,23 @@ public sealed class MainForm : Form
         m_web.AllowExternalDrop = false;
         Controls.Add(m_web);
         Load += OnLoaded;
+        // An unfocused/minimized UI does not keep desktop guests running forever.
+        // Parking writes a snapshot then exits vmhost; returning to Soil never
+        // starts a VM without an explicit user request.
+        Deactivate += (_, _) => m_idleTimer.Start();
+        Activated += (_, _) => { if (WindowState != FormWindowState.Minimized) m_idleTimer.Stop(); };
+        Resize += (_, _) =>
+        {
+            if (WindowState == FormWindowState.Minimized) m_idleTimer.Start();
+            else if (ContainsFocus) m_idleTimer.Stop();
+        };
+        m_idleTimer.Tick += (_, _) =>
+        {
+            m_idleTimer.Stop();
+            if (WindowState == FormWindowState.Minimized || !ContainsFocus)
+                m_vmManager.IdleAll();
+        };
+        FormClosed += (_, _) => m_idleTimer.Dispose();
     }
 
     private async void OnLoaded(object? sender, EventArgs e)
