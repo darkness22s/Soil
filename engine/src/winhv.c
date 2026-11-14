@@ -74,6 +74,25 @@ int VhWhvInit(VH_VM *pVm, u32 cCpus)
             goto fail;
     }
 
+    /*
+     * Exit only for CPUID leaves whose feature bits our legacy-PIC, PIT-
+     * timed guest must mask. Without this list, asking WHPX for CPUID exits
+     * makes Linux's thousands of unrelated CPUID calls round-trip through
+     * userspace during every cold boot. WHPX still returns native virtual-
+     * CPU values for the other leaves.
+     */
+    const UINT32 aCpuidExits[] = {
+        0x00000001, 0x00000007,
+        0x0000000D, 0x0000000E, 0x0000000F,
+        0x80000001, 0x80000007
+    };
+    hrc = WHvSetPartitionProperty(hPartition,
+                                  WHvPartitionPropertyCodeCpuidExitList,
+                                  aCpuidExits, sizeof(aCpuidExits));
+    if (FAILED(hrc))
+        VhLog("whv: CpuidExitList not accepted (%#lx); using legacy all-leaves interception",
+              (unsigned long)hrc);
+
     hrc = WHvSetupPartition(hPartition);
     if (FAILED(hrc))
     {
