@@ -152,7 +152,7 @@ class LinuxHost:
             if mid in self.running:
                 raise SoilError("Stop the VM before changing installer media.")
             if (not filename.lower().endswith(".iso") or len(filename) > 200 or
-                    any(c in filename for c in ("/", "\\\\", "\\x00"))):
+                    any(ord(c) < 32 or c in ("/", chr(92)) for c in filename):
                 raise SoilError("Choose a local .iso file without path components.")
             try:
                 installer_iso.save_iso(source, length, self._installer_path(mid))
