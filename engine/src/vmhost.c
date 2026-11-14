@@ -564,46 +564,9 @@ void VhFbSnapshot(VH_VM *pVm, u8 *pbDst)
     LeaveCriticalSection(&g_csFbSnap);
 }
 
-/* dev helper: dump the guest framebuffer as a 32-bpp BMP */
-static void VhWriteFbBmp(VH_VM *pVm)
-{
-    u8 *pbSnap = (u8 *)malloc(VH_FB_SIZE);
-    if (!pbSnap)
-        return;
-    VhFbSnapshot(pVm, pbSnap);
-    FILE *pf = fopen("C:\\Users\\Lenovo\\AppData\\Local\\Temp\\opencode\\vmlog\\fb.bmp", "wb");
-    if (!pf)
-    {
-        free(pbSnap);
-        return;
-    }
-
-    u32 cbImage = VH_FB_STRIDE * VH_FB_H;
-    u8 hdr[54];
-    memset(hdr, 0, sizeof(hdr));
-    u32 cbFile = 54 + cbImage;
-    hdr[0] = 'B'; hdr[1] = 'M';
-    memcpy(&hdr[2], &cbFile, 4);
-    memcpy(&hdr[10], "\x36\x00\x00\x00", 4);
-    u32 cbDib = 40;
-    memcpy(&hdr[14], &cbDib, 4);
-    memcpy(&hdr[18], &(u32){ VH_FB_W }, 4);
-    memcpy(&hdr[22], &(u32){ VH_FB_H }, 4);
-    u16 planes = 1, bpp = 32;
-    memcpy(&hdr[26], &planes, 2);
-    memcpy(&hdr[28], &bpp, 2);
-    memcpy(&hdr[34], &cbImage, 4);
-    fwrite(hdr, 1, 54, pf);
-    for (int y = VH_FB_H - 1; y >= 0; y--)
-        fwrite(pbSnap + (size_t)y * VH_FB_STRIDE, 1, VH_FB_STRIDE, pf);
-    fclose(pf);
-    free(pbSnap);
-}
-
 static unsigned __stdcall TimerThreadProc(void *pvArg)
 {
     VH_VM *pVm = (VH_VM *)pvArg;
-    u64 uNextFbDumpNs = VhGuestNowNs() + 15000000000ull;
     u64 uNextBeatNs = VhGuestNowNs() + 60000000000ull;
     while (!pVm->fStop)
     {
@@ -620,12 +583,6 @@ static unsigned __stdcall TimerThreadProc(void *pvArg)
            while, kick it out so the run loop can inspect the guest state */
         if (pVm->uLastExitNs && VhGuestNowNs() - pVm->uLastExitNs > 3000000000ull)
             VhWhvCancelRun(pVm);
-        /* dev: save the guest framebuffer as a BMP so the screen can be inspected */
-        if (pVm->mem.pbRam && pVm->mem.gpaFb && VhGuestNowNs() >= uNextFbDumpNs)
-        {
-            uNextFbDumpNs = VhGuestNowNs() + 15000000000ull;
-            VhWriteFbBmp(pVm);
-        }
         if (VhGuestNowNs() >= uNextBeatNs)
         {
             uNextBeatNs = VhGuestNowNs() + 60000000000ull;
