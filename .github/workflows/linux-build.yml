@@ -37,6 +37,16 @@ jobs:
       - name: Unit tests (API, persistence, mocked QEMU lifecycle)
         run: python3 -m unittest discover -s app/linux/tests -v
 
+      - name: Install native app integration dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xvfb x11vnc xauth novnc websockify openbox libx11-dev
+
+      - name: End-to-end native ELF import, display, VNC and stop
+        env:
+          SOIL_NATIVE_E2E: "1"
+        run: python3 -m unittest discover -s app/linux/tests -p test_native_e2e.py -v
+
       - name: Package Linux application
         run: |
           bash app/linux/build.sh
