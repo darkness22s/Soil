@@ -41,8 +41,8 @@ VM is started again, but the guest processes do not auto-run.
 Native ELF binaries need compatible shared libraries inside Soil's minimal
 Tiny Core guest. This is not a Ubuntu/Debian package manager: `.deb`, `.rpm`,
 `.iso`, Windows EXEs, and shell install scripts are not supported. The
-native-application feature requires the bundled updated `core2.gz` image
-and configured guest SSH key. Only run binaries the user explicitly chose
+native-application feature requires the bundled updated `core2.gz` image;
+Soil creates the guest SSH key automatically when needed. Only run binaries the user explicitly chose
 and trusts.
 
 If a command reports that Soil is not running, ask the user to open the Soil desktop app and retry. Do not edit Soil's endpoint file or call internal APIs directly. Deleting a VM permanently removes its machine data, so obtain explicit confirmation before running `vm delete`.
