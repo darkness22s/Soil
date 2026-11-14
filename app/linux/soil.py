@@ -343,7 +343,7 @@ class LinuxHost:
                 "-display", "none", "-vnc", "127.0.0.1:" + str(display),
                 "-qmp", "unix:" + str(monitor) + ",server=on,wait=off",
                 "-serial", "file:" + str(folder / "logs" / "serial.log"),
-                "-monitor", "none", "-no-reboot",
+                "-monitor", "none", *( [] if install_linux else ["-no-reboot"] ),
             ]
             qproc = None
             webproc = None
