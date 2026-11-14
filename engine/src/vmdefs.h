@@ -234,7 +234,7 @@ typedef struct VH_VM
     char szSnapPath[1024];
     volatile bool fSnapWanted;
     volatile bool fSnapWorking;
-    bool fCleanExit;
+    volatile bool fCleanExit;
     bool fSnapRamLazy;
     FILE *pFileLazy;
     u8 *pbRamLoaded;
