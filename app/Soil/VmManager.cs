@@ -533,7 +533,15 @@ public sealed class VmManager
             runtime = m_runtimes[record.Id];
             if (runtime.Deleting)
                 return null;
+            // A Start arriving during checkpoint is recalled after the engine exits.
+            // Never race the snapshot writer by starting a second vmhost.
+            if (runtime.Status == "stopping")
+            {
+                runtime.RestartAfterStop = true;
+                return BundleLocked(record);
+            }
             runtime.ParkPending = false;
+            runtime.RestartAfterStop = false;
             if (runtime.Proc is { HasExited: false } || runtime.Status == "starting")
                 return BundleLocked(record);
             runtime.StartCts?.Cancel();
@@ -573,6 +581,7 @@ public sealed class VmManager
             if (runtime.Deleting)
                 return null;
             runtime.ParkPending = false;
+            runtime.RestartAfterStop = false;
             runtime.StartCts?.Cancel();
             runtime.StatsCts?.Cancel();
             var proc = runtime.Proc;
@@ -716,6 +725,8 @@ public sealed class VmManager
                 runtime.StartCts?.Cancel();
                 runtime.StatsCts?.Cancel();
                 runtime.StartGeneration++;
+                runtime.RestartAfterStop = false;
+                runtime.ParkPending = false;
             }
             live = m_runtimes.Values.Where(r => r.Proc is { HasExited: false }).ToList();
             launches = m_runtimes.Values
@@ -732,6 +743,11 @@ public sealed class VmManager
         catch
         {
         }
+
+        // Launches may have created processes while cancellation was in flight.
+        // Re-read the live set so app shutdown cannot orphan a late vmhost.
+        lock (m_lock)
+            live = m_runtimes.Values.Where(r => r.Proc is { HasExited: false }).ToList();
 
         var syncs = new List<Task>();
         foreach (var runtime in live)
@@ -763,17 +779,21 @@ public sealed class VmManager
             }
         }
 
-        foreach (var runtime in live)
+        // Snapshot serialization can take several seconds on larger machines.
+        // Wait in parallel so exit time is bounded by one checkpoint, not VM count.
+        var exits = live.Select(runtime => Task.Run(() =>
         {
             try
             {
-                if (!runtime.Proc!.WaitForExit(3000))
+                if (!runtime.Proc!.WaitForExit(30000))
                     runtime.Proc.Kill(true);
             }
             catch
             {
+                KillQuietly(runtime.Proc);
             }
-        }
+        })).ToArray();
+        Task.WaitAll(exits);
 
         lock (m_lock)
         {
@@ -1030,6 +1050,22 @@ public sealed class VmManager
             psi.ArgumentList.Add("--ipc");
             psi.ArgumentList.Add(token);
 
+            // A clean stop writes a durable snapshot, then exits completely.
+            // Consume the checkpoint on start: if a VM crashes, an old memory
+            // image can never be replayed against its now-modified data disk.
+            var snapshotPath = m_paths.MachineSnapshotPath(runtime.Record.Id);
+            var restorePath = m_paths.MachineRestorePath(runtime.Record.Id);
+            if (File.Exists(restorePath))
+                File.Delete(restorePath);
+            if (File.Exists(snapshotPath))
+            {
+                File.Move(snapshotPath, restorePath);
+                psi.ArgumentList.Add("--restore");
+                psi.ArgumentList.Add(restorePath);
+            }
+            psi.ArgumentList.Add("--snapshot-out");
+            psi.ArgumentList.Add(snapshotPath);
+
             proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
             proc.OutputDataReceived += (_, _) => { };
             proc.ErrorDataReceived += (_, _) => { };
@@ -1220,10 +1256,14 @@ public sealed class VmManager
                 if (runtime.Status is "running" or "starting")
                     runtime.Error = $"The VM engine exited unexpectedly (code {proc.ExitCode}). " +
                                     $"Check {m_paths.MachineLogPath(runtime.Record.Id)}.";
+                var restart = runtime.RestartAfterStop && !runtime.Deleting;
+                runtime.RestartAfterStop = false;
                 runtime.Status = ConsumeParkLocked(runtime);
                 runtime.StartedUtc = null;
                 runtime.History.Clear();
                 CleanupLocked(runtime);
+                if (restart)
+                    _ = Task.Run(() => Start(runtime.Record.Id));
             }
         }
     }
@@ -1274,10 +1314,14 @@ public sealed class VmManager
         {
             if (ReferenceEquals(runtime.Proc, proc))
             {
+                var restart = runtime.RestartAfterStop && !runtime.Deleting;
+                runtime.RestartAfterStop = false;
                 runtime.Status = ConsumeParkLocked(runtime);
                 runtime.StartedUtc = null;
                 runtime.History.Clear();
                 CleanupLocked(runtime);
+                if (restart)
+                    _ = Task.Run(() => Start(runtime.Record.Id));
             }
         }
     }
@@ -1327,6 +1371,8 @@ public sealed class VmManager
         {
             runtime.Status = ConsumeParkLocked(runtime);
             runtime.StartedUtc = null;
+            runtime.History.Clear();
+            CleanupLocked(runtime);
         }
 
         var uptime = runtime.StartedUtc is null ? 0 :
@@ -1473,6 +1519,11 @@ public sealed class VmManager
         runtime.Proc = null;
         runtime.StartCts = null;
         runtime.LaunchTask = null;
+        // Restored snapshots are one-shot. A successful park produces a new
+        // resume.snap; a crash leaves no reusable memory state behind.
+        try { File.Delete(m_paths.MachineRestorePath(runtime.Record.Id)); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private async Task EnsureGuestGuiReadyAsync(
@@ -2211,6 +2262,7 @@ internal sealed class VmRuntime
     internal Task? LaunchTask;
     internal int StartGeneration;
     internal bool ParkPending;
+    internal bool RestartAfterStop;
     internal string Status = "stopped";
     internal bool Deleting;
     internal string? Error;
