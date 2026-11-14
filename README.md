@@ -63,6 +63,62 @@ On first launch, machines from the legacy `%LOCALAPPDATA%\Boxify` store are
 imported into the new layout. The legacy folder is left in place. User machines
 and files are never removed by an upgrade or uninstall.
 
+## Native Linux apps in the default Soil VM
+
+The **Windows desktop Soil app** boots a Tiny Core Linux guest from the
+**bundled** `vmlinuz64`, `core2.gz`, and `soil.squashfs` image set. Select
+an ordinary desktop VM and click **Linux apps** to import a native
+**x86-64 Linux ELF executable** or **Type 2 AppImage** (up to 256 MiB).
+The file transfers through Soil's existing SSH port forward and is
+executed **inside that guest Linux desktop**, not by the Windows host.
+The VM must be running to launch it. The VM does not auto-start for an
+import.
+
+Imported binaries are stored per VM at
+`~/.soil/machines/<vm-id>/native-apps/<app-id>/` on the host. The guest
+launcher and desktop entries are restored on the next **explicit** VM start,
+because the stock Tiny Core guest's `/home` is a temporary filesystem.
+Stopping a VM stops its applications. Removing an imported app deletes the
+host copy and its guest launcher; deleting the VM removes its imports.
+
+The current guest is a **minimal Tiny Core Linux system**, not Ubuntu or
+Debian. Binaries must be **x86-64 Linux executables** and their required
+libraries must be available inside the guest. Type 2 AppImages use
+`APPIMAGE_EXTRACT_AND_RUN=1` to avoid a FUSE requirement. **.deb**, **.rpm**,
+**.iso**, ARM, Windows EXE and shell installers are not supported.
+Apps downloaded from unknown sources can compromise their guest. Only
+import executables you trust. The host needs its existing guest SSH private
+key and forward for transfer and installation.
+
+API (local loopback only):
+
+```text
+GET    /api/vms/{id}/native-apps
+POST   /api/vms/{id}/native-apps                   (Content-Type: application/octet-stream,
+                                                    X-Soil-Filename: URL-encoded name)
+POST   /api/vms/{id}/native-apps/{appId}/launch
+DELETE /api/vms/{id}/native-apps/{appId}
+```
+
+### Bundled image build
+
+The standard `app/build.ps1` creates the normal Windows MSI and now patches
+the **published** copy of `core2.gz` with
+`soil-sdk/runtime/soil-native` using
+`tools/soil-ci/inject-native-guest.py`. The private original image in
+`app/images` is never altered. This adds the guest launcher directly to
+the initramfs while preserving the same WHPX engine, kernel, SquashFS
+system disk, and app UI. Python 3 is required at build time (GitHub Actions
+provisions it). Windows installer CI verifies that the launcher is present
+in the packaged image.
+
+Linux CI tests the image-injection format and guest install/launch/remove
+flow. The Windows installer CI builds and checks the actual bundled assets.
+**Full graphical ELF/AppImage execution within a WHPX VM still requires the
+trusted self-hosted WHPX smoke runner or manual machine testing.** Neither
+the hosted build nor the Linux script tests proves arbitrary third-party
+binaries will run in this compact guest.
+
 ## Agent machines
 
 The terminal button beside the machine list creates a 512 MB agent machine with
