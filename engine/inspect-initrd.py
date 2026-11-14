@@ -15,7 +15,7 @@ def entries(path):
         fields = [int(data[i+6+8*j:i+14+8*j], 16) for j in range(13)]
         size, name_size = fields[6], fields[11]
         i += 110
-        name = data[i:i+name_size].rstrip(b"\\x00").decode("utf-8", errors="replace")
+        name = data[i:i+name_size].rstrip(b"\x00").decode("utf-8", errors="replace")
         i = (i + name_size + 3) & ~3
         file_data = data[i:i+size]
         i = (i + size + 3) & ~3
@@ -28,12 +28,12 @@ def main(path):
     print("INITRD files", len(all_entries))
     names = [name for name, _, _ in all_entries]
     for name in names:
-        if re.search(r"(^|/)(init|inittab|bootlocal\\.sh|bootsync\\.sh|rcS|rc\\.local|rc\\.sysinit|sshd|dropbear|Xvesa|startx|xinitrc)$", name, re.I):
+        if re.search(r"(^|/)(init|inittab|bootlocal\.sh|bootsync\.sh|rcS|rc\.local|rc\.sysinit|sshd|dropbear|Xvesa|startx|xinitrc)$", name, re.I):
             print("BOOT_FILE", name)
     allow = [
-        r"^init$", r"^etc/inittab$", r"^etc/init\\.d/rcS$",
-        r"^etc/init\\.d/tc-config$", r"^opt/bootlocal\\.sh$",
-        r"^opt/bootsync\\.sh$", r"^etc/rc\\.local$",
+        r"^init$", r"^etc/inittab$", r"^etc/init\.d/rcS$",
+        r"^etc/init\.d/tc-config$", r"^opt/bootlocal\.sh$",
+        r"^opt/bootsync\.sh$", r"^etc/rc\.local$",
     ]
     for name, contents, mode in all_entries:
         if not any(re.match(p, name) for p in allow) or len(contents) > 25000:
