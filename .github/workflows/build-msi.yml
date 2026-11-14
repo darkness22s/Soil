@@ -49,9 +49,16 @@ jobs:
         run: .\app\build.ps1 -SkipEngine
 
       - name: Upload MSI artifact
+        id: upload
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: Soil-4.2.0-x64
           path: app/dist/Soil-4.2.0-x64.msi
           if-no-files-found: error
           retention-days: 30
+
+      - name: Report artifact upload failure
+        if: steps.upload.outcome == 'failure'
+        shell: pwsh
+        run: Write-Host '::warning::MSI built successfully, but artifact upload failed (check GitHub Actions storage quota). Free quota and rerun to publish the installer.'
