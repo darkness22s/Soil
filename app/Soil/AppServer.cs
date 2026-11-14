@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
@@ -20,6 +21,7 @@ public sealed class AppServer : IDisposable
     private readonly GitHubService m_github;
     private readonly AppRuntimeManager m_apps;
     private readonly AgentManager m_agents;
+    private readonly NativeLinuxAppManager m_native;
     private readonly UiStateStore m_ui;
 
     public string Url { get; private set; } = "";
@@ -31,6 +33,8 @@ public sealed class AppServer : IDisposable
         m_github = new GitHubService(paths);
         m_apps = new AppRuntimeManager(manager, paths, m_github);
         m_agents = new AgentManager(manager);
+        m_native = new NativeLinuxAppManager(manager, paths);
+        manager.RestoreNativeApps = m_native.RestoreAsync;
         m_ui = new UiStateStore(paths);
 
         var uiRoot = Path.Combine(AppContext.BaseDirectory, "ui");
@@ -266,6 +270,85 @@ public sealed class AppServer : IDisposable
                 return Results.BadRequest(new { error = "A name is required." });
             var dto = m_manager.Create(body.Name.Trim(), body.Size ?? "m");
             return Results.Json(dto, JsonOptions.Web);
+        });
+
+        // Native files are transferred into the bundled guest, never run on Windows.
+        // This endpoint is the only exception to the default 1 MiB request body cap.
+        m_app.MapGet("/api/vms/{id}/native-apps", (string id) =>
+        {
+            if (m_manager.FindRecord(id) is null)
+                return Results.NotFound();
+            try { return Results.Json(m_native.List(id), JsonOptions.Web); }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        });
+
+        m_app.MapPost("/api/vms/{id}/native-apps", async (string id, HttpContext ctx) =>
+        {
+            if (m_manager.FindRecord(id) is null)
+                return Results.NotFound();
+            if (!string.Equals(ctx.Request.ContentType, "application/octet-stream",
+                               StringComparison.OrdinalIgnoreCase))
+                return Results.BadRequest(new { error = "Send raw application/octet-stream bytes." });
+            var length = ctx.Request.ContentLength;
+            if (!length.HasValue || length.Value < 64 || length.Value > NativeLinuxAppManager.MaxBytes)
+                return Results.BadRequest(new { error = "Linux app upload must be 64 bytes to 256 MiB." });
+
+            var requestSize = ctx.Features.Get<IHttpMaxRequestBodySizeFeature>();
+            if (requestSize is { IsReadOnly: false })
+                requestSize.MaxRequestBodySize = NativeLinuxAppManager.MaxBytes;
+
+            try
+            {
+                var encoded = ctx.Request.Headers["X-Soil-Filename"].ToString();
+                var fileName = Uri.UnescapeDataString(encoded);
+                var app = await m_native.ImportAsync(
+                    id, fileName, ctx.Request.Body, length.Value, ctx.RequestAborted);
+                return Results.Json(app, JsonOptions.Web);
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidDataException
+                                           or UriFormatException)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        });
+
+        m_app.MapPost("/api/vms/{id}/native-apps/{appId}/launch",
+            async (string id, string appId, HttpContext ctx) =>
+        {
+            try
+            {
+                var app = await m_native.LaunchAsync(id, appId, ctx.RequestAborted);
+                return Results.Json(app, JsonOptions.Web);
+            }
+            catch (FileNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
+        });
+
+        m_app.MapDelete("/api/vms/{id}/native-apps/{appId}",
+            async (string id, string appId, HttpContext ctx) =>
+        {
+            try
+            {
+                await m_native.RemoveAsync(id, appId, ctx.RequestAborted);
+                return Results.NoContent();
+            }
+            catch (FileNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
         });
 
         m_app.MapPost("/api/vms/{id}/start", (string id) =>
