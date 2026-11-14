@@ -105,7 +105,7 @@ def inject(source: Path, destination: Path, launcher: Path) -> None:
 def verify(image: Path, launcher: Path) -> None:
     payload = gzip.decompress(image.read_bytes())
     script = launcher.read_bytes()
-    if (GUEST_PATH.encode() + b"\0" not in payload or script not in payload:
+    if (GUEST_PATH.encode() + b"\0" not in payload or script not in payload):
         raise ValueError("The bundled core2.gz does not contain the required guest native launcher.")
     if len(payload) <= 65536:
         raise ValueError("The bundled guest image is unexpectedly small.")
