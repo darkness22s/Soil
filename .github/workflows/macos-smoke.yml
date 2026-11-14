@@ -14,6 +14,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Install QEMU
         run: brew install qemu
@@ -23,6 +25,10 @@ jobs:
           images="$HOME/Library/Application Support/Soil/images"
           mkdir -p "$images"
           cp app/images/{vmlinuz64,core2.gz,soil.squashfs} "$images/"
+          if head -c 100 "$images/vmlinuz64" | grep -q 'version https://git-lfs.github.com/spec'; then
+            echo 'ERROR: Git LFS guest images were not downloaded.' >&2
+            exit 1
+          fi
 
       - name: Build macOS app
         run: sh ./app/macos/build.sh
