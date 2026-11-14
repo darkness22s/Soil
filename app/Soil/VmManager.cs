@@ -71,6 +71,9 @@ public sealed class VmManager
 
     public SoilPaths Home => m_paths;
 
+    // Runs only when a guest reaches the desktop-ready state; never keeps a VM alive.
+    internal Func<string, CancellationToken, Task>? RestoreNativeApps { get; set; }
+
     public IReadOnlyList<VmDto> List()
     {
         lock (m_lock)
@@ -398,6 +401,50 @@ public sealed class VmManager
         }
         throw new InvalidOperationException(
             "Could not install and launch the app package in the machine.");
+    }
+
+    internal async Task DeployNativeLinuxAppAsync(
+        string machineId, string appId, string filePath, string displayName,
+        bool launch, CancellationToken ct)
+    {
+        var record = FindRecord(machineId);
+        if (record is null || !string.Equals(record.Kind, "desktop", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Choose an existing desktop VM.");
+        var endpoint = GetSshEndpoint(machineId);
+        if (endpoint is null)
+            throw new InvalidOperationException(
+                "Start the VM first. The guest SSH tunnel and key must be available to install Linux apps.");
+        if (!File.Exists(filePath))
+            throw new FileNotFoundException("The saved Linux application is missing.", filePath);
+
+        var (ssh, key, port) = endpoint.Value;
+        var remote = "/tmp/soil-native-" + appId;
+        if (!await CopyGuestFileAsync(port, key, filePath, remote, ct))
+            throw new InvalidOperationException("Could not transfer the app into the Soil Linux VM.");
+        var install = "command -v soil-native >/dev/null 2>&1 && " +
+                      "soil-native install " + ShellQuote(appId) + " " +
+                      ShellQuote(remote) + " " + ShellQuote(displayName) +
+                      "; rc=$?; rm -f " + ShellQuote(remote) + "; exit $rc";
+        if (!await RunGuestCommandAsync(port, key, install, 30, ct))
+            throw new InvalidOperationException(
+                "The guest native-app launcher is unavailable or rejected the executable. " +
+                "Rebuild/install Soil with the updated bundled guest image.");
+        if (launch && !await RunGuestCommandAsync(
+                port, key, "soil-native launch " + ShellQuote(appId), 30, ct))
+            throw new InvalidOperationException(
+                "The Linux application could not start in the guest. It may need shared libraries " +
+                "not included in the compact Soil Linux image.");
+    }
+
+    internal async Task RemoveNativeLinuxAppAsync(
+        string machineId, string appId, CancellationToken ct)
+    {
+        var endpoint = GetSshEndpoint(machineId);
+        if (endpoint is null)
+            return;
+        var (_, key, port) = endpoint.Value;
+        await RunGuestCommandAsync(port, key, "soil-native remove " +
+                                   ShellQuote(appId), 15, ct);
     }
 
     private async Task<bool> CopyGuestFileAsync(
@@ -1149,6 +1196,13 @@ public sealed class VmManager
             }
 
             StartGuestStats(runtime);
+            if (RestoreNativeApps is { } restore)
+                _ = Task.Run(async () =>
+                {
+                    try { await restore(runtime.Record.Id, ct); }
+                    catch (OperationCanceledException) { }
+                    catch (Exception) { /* A failed restore must not crash or stop the VM. */ }
+                });
             _ = Task.Run(() => MonitorExitAsync(runtime, proc));
         }
         catch (OperationCanceledException)
