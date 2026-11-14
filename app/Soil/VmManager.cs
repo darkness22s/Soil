@@ -837,7 +837,7 @@ public sealed class VmManager
         VmRuntime? runtime;
         lock (m_lock)
         {
-            if (!m_runtimes.TryGetValue(id, out runtime) || runtime.Input is null)
+            if (!m_runtimes.TryGetValue(id, out runtime) || runtime.Deleting)
                 return false;
         }
 
@@ -894,17 +894,48 @@ public sealed class VmManager
             }
         }
 
-        try
+        lock (runtime.InputLock)
         {
-            lock (runtime.InputLock)
+            for (var attempt = 0; attempt < 2; attempt++)
             {
-                runtime.Input.Write(packet, 0, packet.Length);
-                runtime.Input.Flush();
+                try
+                {
+                    if (runtime.Input is null)
+                    {
+                        if (runtime.Proc is null || runtime.Proc.HasExited ||
+                            string.IsNullOrWhiteSpace(runtime.Token))
+                            return false;
+
+                        var reopened = new NamedPipeClientStream(
+                            ".", "SoilInput_" + runtime.Token,
+                            PipeDirection.Out, PipeOptions.Asynchronous);
+                        try
+                        {
+                            reopened.Connect(300);
+                            runtime.Input = reopened;
+                        }
+                        catch
+                        {
+                            reopened.Dispose();
+                            return false;
+                        }
+                    }
+
+                    runtime.Input.Write(packet, 0, packet.Length);
+                    runtime.Input.Flush();
+                    return true;
+                }
+                catch (IOException)
+                {
+                    // The input pipe can disconnect while a VM is still alive.
+                    try { runtime.Input?.Dispose(); } catch { }
+                    runtime.Input = null;
+                }
+                catch
+                {
+                    return false;
+                }
             }
-            return true;
-        }
-        catch
-        {
             return false;
         }
     }
