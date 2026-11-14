@@ -53,6 +53,18 @@ if ((Resolve-Path -LiteralPath $imagesSource).Path -ne (Resolve-Path -LiteralPat
     Copy-Item -Path (Join-Path $imagesSource "*") -Destination $imagesDir -Force
 }
 
+# Extend the EXISTING bundled Tiny Core initramfs with the native Linux app
+# launcher. Modify the published copy, never the private Git LFS source.
+$injectGuest = Join-Path $root "tools\soil-ci\inject-native-guest.py"
+$python = Get-Command python -ErrorAction SilentlyContinue
+if (-not $python) {
+    throw "Python 3 is required to prepare core2.gz with native Linux app support."
+}
+& $python.Source $injectGuest (Join-Path $imagesDir "core2.gz") (Join-Path $imagesDir "core2.gz")
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not embed native Linux app support into the bundled guest image."
+}
+
 $readme = @"
 Soil 4.2.1 - private local build
 
@@ -72,6 +84,7 @@ Use
 - Agent home directories and sign-in state live on each machine data disk and survive restarts.
 - Machines run until explicitly stopped, including while Soil is minimized. Data disks persist across restarts; full-memory autosnapshots are disabled for stability.
 - Sign-in pages open in the machine's built-in browser.
+- Use Linux apps in a selected desktop VM to import a native x86-64 ELF executable or Type 2 AppImage; it runs inside the guest, not on Windows.
 - Use the branch button to import a GitHub repository into its own app machine.
 - Browse machines, apps, skills, cache, and logs from Files.
 - Machine data lives in %USERPROFILE%\.soil.
