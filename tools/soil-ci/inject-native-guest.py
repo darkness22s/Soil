@@ -86,7 +86,7 @@ def inject(source: Path, destination: Path, launcher: Path) -> None:
     if GUEST_PATH.encode() + b"\0" in contents:
         raise ValueError("The initramfs already contains soil-native; supply unmodified image sources.")
     check_archive(contents)
-    overlay = create_overlay(launcher.read_bytes())
+    overlay = create_overlay(launcher.read_bytes().replace(b"\r\n", b"\n"))
     # Each cpio archive must start on a 4-byte boundary.
     image = contents + b"\0" * ((-len(contents)) % 4) + overlay
     output = gzip.compress(image, compresslevel=6, mtime=0)
@@ -104,7 +104,7 @@ def inject(source: Path, destination: Path, launcher: Path) -> None:
 
 def verify(image: Path, launcher: Path) -> None:
     payload = gzip.decompress(image.read_bytes())
-    script = launcher.read_bytes()
+    script = launcher.read_bytes().replace(b"\r\n", b"\n")
     if (GUEST_PATH.encode() + b"\0" not in payload or script not in payload):
         raise ValueError("The bundled core2.gz does not contain the required guest native launcher.")
     if len(payload) <= 65536:
