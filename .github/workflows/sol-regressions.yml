@@ -1,0 +1,45 @@
+name: Sol VM and UI regression checks
+
+on:
+  push:
+    paths:
+      - 'app/Soil/**'
+      - 'engine/src/**'
+      - 'tests/**'
+      - '.github/workflows/sol-regressions.yml'
+  pull_request:
+    paths:
+      - 'app/Soil/**'
+      - 'engine/src/**'
+      - 'tests/**'
+      - '.github/workflows/sol-regressions.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: JavaScript syntax checks
+        run: |
+          node --check app/Soil/ui/onboarding.js
+          node --check app/Soil/ui/app-ui.js
+          node --check app/Soil/ui/github-ui.js
+      - name: VM lifecycle and GitHub UI regression tests
+        run: node --test tests/sol-regressions.test.cjs
+
+  windows-compile:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Compile Windows app
+        shell: pwsh
+        run: dotnet build .\app\Soil\Soil.csproj -c Release --nologo
