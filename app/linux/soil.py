@@ -293,7 +293,6 @@ class LinuxHost:
                 raise SoilError("The Linux preview currently starts desktop VMs only.")
             if mid in self.running:
                 return self._dto(machine)
-            qemu, qemu_img, ws, novnc = self.requirements()
             install_linux = machine.get("bootMode") == "linux-iso"
             if install_linux:
                 if (machine.get("bootInstallerNext") and
@@ -301,6 +300,7 @@ class LinuxHost:
                     raise SoilError("Attach a Linux installer ISO before starting this VM.")
             else:
                 images = self.image_dir()
+            qemu, qemu_img, ws, novnc = self.requirements()
             folder = self.home / "machines" / mid
             disk = folder / "data" / "linux-disk.qcow2"
             disk.parent.mkdir(parents=True, exist_ok=True)
