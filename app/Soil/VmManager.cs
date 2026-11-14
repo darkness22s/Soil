@@ -1289,11 +1289,18 @@ public sealed class VmManager
         }
     }
 
-    private static string ConsumeParkLocked(VmRuntime runtime)
+    private string ConsumeParkLocked(VmRuntime runtime)
     {
         if (!runtime.ParkPending)
             return "stopped";
         runtime.ParkPending = false;
+        // Don't claim a VM is parked/restorable if the checkpoint writer
+        // failed (disk full, access denied, killed engine, etc.).
+        if (!File.Exists(m_paths.MachineSnapshotPath(runtime.Record.Id)))
+        {
+            runtime.Error = "VM stopped, but the checkpoint could not be saved. Next start will cold boot.";
+            return "stopped";
+        }
         return "idle";
     }
 
