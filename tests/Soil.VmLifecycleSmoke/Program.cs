@@ -20,7 +20,7 @@ async Task<VmDto> WaitStatusAsync(string expected, int timeoutSeconds)
             return current;
         if (current.Status == "stopped" && current.Error is not null)
             throw new InvalidOperationException($"VM failed during {expected}: {current.Error}");
-        await Task.Delay(250);
+        await Task.Delay(25);
     }
     throw new TimeoutException($"VM never reached {expected}; last = " +
         manager.List().Single(x => x.Id == vmId).Status);
