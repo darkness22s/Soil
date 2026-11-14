@@ -1,15 +1,6 @@
 name: Boot real bundled Soil guest and execute native ELF
 
 on:
-  push:
-    paths:
-      - 'app/images/**'
-      - 'soil-sdk/runtime/soil-native'
-      - 'tools/soil-ci/guest-native-smoke.sh'
-      - 'tools/soil-ci/GuestInitrdSmoke/**'
-      - 'tools/soil-ci/inject-native-guest.py'
-      - 'app/Soil/GuestInitrd.cs'
-      - '.github/workflows/native-guest-vm-boot.yml'
   pull_request:
     paths:
       - 'app/images/**'
