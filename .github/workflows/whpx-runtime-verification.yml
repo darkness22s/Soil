@@ -23,6 +23,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           lfs: true
+      - name: Repack guest for early SSH (cold-boot experiment)
+        shell: pwsh
+        run: |
+          python .\engine\fastboot-initrd.py .\app\images\core2.gz .\app\images\core2.gz
+          if ($LASTEXITCODE -ne 0) { throw 'Guest boot image optimization failed' }
       - name: Inspect Windows virtualization environment
         shell: pwsh
         run: |
