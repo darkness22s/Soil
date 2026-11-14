@@ -57,12 +57,13 @@ try
     manager.Start(vmId);
     await WaitStatusAsync("running", 180);
     Console.WriteLine($"APP: Recalled VM reached running in {resume.Elapsed.TotalMilliseconds:F1} ms");
-    if (!File.ReadAllText(paths.MachineLogPath(vmId)).Contains("snap: restored in"))
-        throw new InvalidOperationException("App restart was not a snapshot restore.");
-
     manager.Stop(vmId);
     await WaitStatusAsync("stopped", 120);
     AssertNoVmhost();
+    // MinGW's live log handle denies concurrent readers on Windows.
+    // Inspect it only after vmhost has fully exited and closed the file.
+    if (!File.ReadAllText(paths.MachineLogPath(vmId)).Contains("snap: restored in"))
+        throw new InvalidOperationException("App restart was not a snapshot restore.");
     if (!File.Exists(paths.MachineSnapshotPath(vmId)))
         throw new InvalidOperationException("Explicit Stop did not create a checkpoint");
     Console.WriteLine("APP: Explicit Stop checkpointed and fully released the VM process.");
