@@ -88,7 +88,7 @@ class LinuxHostTests(unittest.TestCase):
         app = mock.Mock()
         app.poll.return_value = None
         tmp = tempfile.TemporaryDirectory()
-        runtime = dict(app=app, websocket_port=15940, started=soil.time.monotonic(),
+        runtime = dict(app=app, websockify=app, websocket_port=15940, started=soil.time.monotonic(),
                        temporary=tmp, log=io.BytesIO())
         with mock.patch.object(soil.native_apps, "start", return_value=runtime) as launch:
             self.assertEqual(self.host.start(vm["id"])["status"], "running")
