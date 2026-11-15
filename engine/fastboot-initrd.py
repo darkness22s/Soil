@@ -60,16 +60,9 @@ def optimize_bootlocal(script):
     early = (b"# SOIL_FASTBOOT_EARLY_SSH: stable home and static image are mounted.\n"
              b"# Start the remote service before optional swap and extension hooks.\n"
              b"mkdir -p /etc/dropbear\n" + network + ssh + zram)
-    # Brand-new Soil data disks are zero-filled sparse files. Do not ask
-    # mke2fs to discard the entire virtual device again at first boot.
-    # Keep the original inode density and the journal; preexisting ext4
-    # disks are never reformatted by the guest's existing boot logic.
-    result = script[:home_end] + early + script[home_end:]
-    original_mkfs = b"-i 65536 -E lazy_itable_init=1,lazy_journal_init=1"
-    optimized_mkfs = b"-i 65536 -E nodiscard,lazy_itable_init=1,lazy_journal_init=1"
-    if result.count(original_mkfs) != 1:
-        raise ValueError("Guest first-boot ext4 mkfs command changed")
-    return result.replace(original_mkfs, optimized_mkfs)
+    # Retain the original mke2fs flags for machines without a preformatted
+    # disk template; existing disks are never reformatted or truncated.
+    return script[:home_end] + early + script[home_end:]
 
 
 def optimize_cpio(data):
