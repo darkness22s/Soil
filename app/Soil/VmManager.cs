@@ -107,6 +107,11 @@ public sealed class VmManager
                 CreatedUtc = DateTime.UtcNow
             };
             m_paths.EnsureMachine(record.Id);
+            // Set up the blank persistent ext4 volume at explicit machine
+            // creation, not during the first VM boot. The sparse template
+            // occupies only initialized filesystem sectors on NTFS.
+            PreformattedDisk.TryCreate(m_imagesDir,
+                m_paths.MachineDiskPath(record.Id), record.DiskGb);
             WriteMachineRecordLocked(record);
             m_records.Add(record);
             m_runtimes[record.Id] = new VmRuntime(record);
@@ -149,6 +154,11 @@ public sealed class VmManager
                 CreatedUtc = DateTime.UtcNow
             };
             m_paths.EnsureMachine(record.Id);
+            // Set up the blank persistent ext4 volume at explicit machine
+            // creation, not during the first VM boot. The sparse template
+            // occupies only initialized filesystem sectors on NTFS.
+            PreformattedDisk.TryCreate(m_imagesDir,
+                m_paths.MachineDiskPath(record.Id), record.DiskGb);
             WriteMachineRecordLocked(record);
             m_records.Add(record);
             m_runtimes[record.Id] = new VmRuntime(record);
@@ -188,6 +198,11 @@ public sealed class VmManager
                 CreatedUtc = DateTime.UtcNow
             };
             m_paths.EnsureMachine(record.Id);
+            // Set up the blank persistent ext4 volume at explicit machine
+            // creation, not during the first VM boot. The sparse template
+            // occupies only initialized filesystem sectors on NTFS.
+            PreformattedDisk.TryCreate(m_imagesDir,
+                m_paths.MachineDiskPath(record.Id), record.DiskGb);
             WriteMachineRecordLocked(record);
             m_records.Add(record);
             m_runtimes[record.Id] = new VmRuntime(record);
