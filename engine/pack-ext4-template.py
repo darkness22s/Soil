@@ -2,7 +2,7 @@
 """Pack an ext4 sparse disk into self-describing compressed extents.
 
 Run only at build time on Linux, after mke2fs has initialized a regular sparse
-40-GB file. At runtime the Soil host expands only allocated extents, marks the
+40/80/160-GiB file. At runtime the Soil host expands only allocated extents, marks the
 destination sparse, then atomically publishes it before launching the guest.
 """
 import errno
@@ -22,8 +22,8 @@ def main():
     source = Path(sys.argv[1])
     target = Path(sys.argv[2])
     size = source.stat().st_size
-    if size != 40 * 1024 ** 3:
-        raise ValueError(f"Expected a 40-GiB disk, got {size} bytes")
+    if size not in (40 * 1024 ** 3, 80 * 1024 ** 3, 160 * 1024 ** 3):
+        raise ValueError(f"Only 40, 80, or 160-GiB disks are supported, got {size} bytes")
     total = 0
     segments = 0
     with source.open("rb", buffering=0) as disk, gzip.open(target, "wb", compresslevel=3) as out:
