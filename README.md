@@ -107,23 +107,46 @@ SSH forwarding is configured. Agent and app worker machines still wait for
 service readiness. **First drawn pixels are not proof that SSH, the desktop
 window manager, or every guest application is ready.**
 
-For realistic timings, run the genuine Windows WHPX guest smoke with a
-per-machine writable data disk:
+### Fast first boot without a background VM
+
+When you explicitly **create** a new VM on a Windows NTFS volume, Soil clones
+a preformatted ext4 filesystem from one of three bundled sparse templates:
+**40 GiB, 80 GiB (the default machine tier), or 160 GiB**. The compressed
+templates are approximately 87/166/283 KiB, respectively, and copying the
+initialized sectors requires only a few megabytes of actual disk space.
+The full selected disk size remains available to the guest. There is no
+guest process running during creation, and **existing data disks are never
+modified**. On a filesystem without sparse-file support or if a template is
+missing, the guest performs its original first-run formatting instead.
+
+The bundled Tiny Core image also starts static SSH before extension hooks,
+and initializes ephemeral zram swap without waiting to generate a random
+swap UUID. These tweaks are applied when preparing the Windows installer.
+Python 3 is required only to *build* the optimized initrd, not to run Soil;
+a local build without Python retains the stock guest startup script.
+
+For reproducible WHPX measurements, run this Windows x64 smoke test with
+Python 3 and the bundled guest images:
 
 ```powershell
 .\engine\snapshot-smoke-test.ps1 -ImagesDir .\app\images
 ```
 
-The Windows 2025 CI verification workflow
-(`.github/workflows/whpx-runtime-verification.yml`) tests a real guest,
-cold SSH readiness, checkpoint creation, full engine exit, snapshot recall,
-and the Soil app's Start/Idle/Recall/Stop lifecycle with SSH forwarding
-enabled. On representative November 2026 CI runs, a cold SSH-ready boot with
-a 40-GB sparse data disk took approximately **4.2 seconds**, a stored
-checkpoint restored to SSH readiness in approximately **0.6 seconds**, and
-first visible guest drawing in the app took approximately **1.2–1.9 seconds**.
-These are per-run measurements, not a promise across devices. **Under two
-seconds for full first-ever Linux/SSH readiness is not yet achieved.**
+The Windows 2025 CI workflow
+(`.github/workflows/whpx-runtime-verification.yml`) tests actual Linux SSH
+readiness, a preformatted persistent data disk, snapshot save, complete VM
+engine exit, snapshot restore, and the app's Create/Start/Idle/Recall/Stop
+lifecycle. A November 2026 run recorded **3.35 seconds** for a fresh SSH-ready
+boot, **595 milliseconds** to restore from a parked snapshot, and **1.84
+seconds** for the first guest-drawn frame in the app. The tests are per-run
+measurements on nested virtualization, not guaranteed across all hardware.
+**Under two seconds for complete first-ever Linux/SSH readiness is still not
+achieved.** The first displayed guest frame is not proof that every application
+or service is initialized.
+
+The template generator is `engine/pack-ext4-template.py`, run on Linux after
+`mkfs.ext4` prepares a regular sparse image. The checked-in templates allow
+Windows installer builds and end-user creation without Linux tools.
 
 ## Build cache
 
