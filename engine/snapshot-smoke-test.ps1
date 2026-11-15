@@ -138,6 +138,11 @@ function Stop-GuestClean {
 }
 
 try {
+    $template = Join-Path $images "data-ext4-40g.sparse.gz"
+    if (Test-Path -LiteralPath $template) {
+        & python (Join-Path $PSScriptRoot "expand-ext4-template.py") $template $dataDisk
+        if ($LASTEXITCODE -ne 0) { throw "Preformatted data disk expansion failed." }
+    }
     $firstLog = Join-Path $directory "first.log"
     Start-Guest $firstLog ""
     Stop-GuestClean
