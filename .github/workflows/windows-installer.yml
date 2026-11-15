@@ -58,6 +58,7 @@ jobs:
           foreach ($entry in @(
             @{ Name='images/vmlinuz64'; Minimum=7000000 },
             @{ Name='images/core2.gz'; Minimum=18000000 },
+            @{ Name='images/data-ext4-40g.sparse.gz'; Minimum=80000 },
             @{ Name='images/soil.squashfs'; Minimum=400000000 },
             @{ Name='ui/app.html'; Minimum=20000 },
             @{ Name='ui/skill-ui.js'; Minimum=1000 },
@@ -69,6 +70,8 @@ jobs:
             if ($actual -lt $entry.Minimum) { throw "Truncated installer payload: $($entry.Name) ($actual bytes)" }
             Write-Host "$($entry.Name): $actual bytes"
           }
+          python -c "import gzip, pathlib; p=pathlib.Path('app/dist/Soil/images/core2.gz'); assert b'SOIL_FASTBOOT_EARLY_SSH' in gzip.decompress(p.read_bytes()), 'Installer contains unoptimized initrd'"
+          if ($LASTEXITCODE -ne 0) { throw 'Guest fastboot optimization missing from installer' }
           $msi = Get-ChildItem app/dist/Soil-*-x64.msi | Select-Object -First 1
           if (-not $msi -or $msi.Length -lt 300MB) { throw 'Missing or unexpectedly small bundled-image MSI' }
           Write-Host "Verified MSI: $($msi.Name) ($($msi.Length) bytes)"
