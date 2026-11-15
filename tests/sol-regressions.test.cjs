@@ -25,14 +25,28 @@ test('new VMs start only after explicit user action; 2GiB is the default', () =>
   assert.match(html, /id="githubBtn"/);
 });
 
-test('GitHub can be connected after setup, reconnected, and disconnected', () => {
+test('GitHub dialog contains only Connect GitHub, Close, and the X control', () => {
+  const html = read('app/Soil/ui/app.html');
+  const dialog = html.match(/<dialog class="skill-dialog github-dialog"[\s\S]*?<\/dialog>/)?.[0];
+  assert.ok(dialog);
+  assert.deepEqual([...dialog.matchAll(/<button[^>]*id="([^"]+)"/g)].map(match => match[1]),
+    ['githubCloseIcon', 'githubConnect', 'githubClose']);
+  assert.doesNotMatch(dialog, /githubWorkerUrl|githubSave|githubDisconnect|authentication service URL|Save URL/);
+  assert.match(html, /\.skill-dialog-kicker\{[^}]*text-transform:none/);
+  assert.match(html, /<div class="skill-dialog-kicker">Integrations<\/div>/);
+  assert.match(html, /<div class="skill-dialog-kicker">AI integrations<\/div>/);
+});
+
+test('GitHub sign-in uses the configured backend without exposing the service URL', () => {
   const html = read('app/Soil/ui/app.html');
   const js = read('app/Soil/ui/github-ui.js');
+  const service = read('app/Soil/GitHubService.cs');
   assert.match(html, /src="github-ui.js"/);
   assert.match(js, /\/api\/github\/connect/);
-  assert.match(js, /\/api\/github\/config/);
-  assert.match(js, /\/api\/github\/disconnect/);
   assert.match(js, /soil:github-connected/);
+  assert.doesNotMatch(js, /githubWorkerUrl|githubSave|githubDisconnect|workerUrl|\/api\/github\/config/);
+  assert.doesNotMatch(service.match(/public sealed record GitHubStatus\([\s\S]*?\);/)?.[0] || '', /WorkerUrl/);
+  assert.match(service, /GitHub sign-in is not configured for this installation/);
 });
 
 test('VMs start on demand, restore single-use snapshots, and cleanly park when inactive', () => {

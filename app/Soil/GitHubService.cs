@@ -15,7 +15,6 @@ public sealed record GitHubStatus(
     bool Connected,
     string? Login,
     string? AvatarUrl,
-    string WorkerUrl,
     bool Connecting,
     string? Error);
 
@@ -94,7 +93,7 @@ public sealed class GitHubService : IDisposable
                 return StatusLocked();
             if (string.IsNullOrWhiteSpace(m_workerUrl))
             {
-                m_connectError = "Set a GitHub service URL in Settings first.";
+                m_connectError = "GitHub sign-in is not configured for this installation.";
                 return StatusLocked();
             }
             m_connecting = true;
@@ -310,7 +309,6 @@ public sealed class GitHubService : IDisposable
         m_session is not null,
         m_session?.Login,
         null,
-        m_workerUrl,
         m_connecting,
         m_connectError);
 

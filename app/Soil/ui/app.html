@@ -911,7 +911,7 @@
   }
   .skill-dialog::backdrop{background:rgba(0,0,0,.45)}
   .skill-dialog-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
-  .skill-dialog-kicker{font-size:10px;letter-spacing:.12em;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:6px}
+  .skill-dialog-kicker{font-size:12px;letter-spacing:normal;font-weight:500;color:var(--muted);text-transform:none;margin-bottom:6px}
   .skill-dialog h2{font-size:19px;font-weight:700;letter-spacing:-.025em}
   .skill-dialog p{font-size:12px;line-height:1.65;color:var(--muted);margin-top:8px}
   .skill-x{flex-shrink:0;width:28px;height:28px;border-radius:8px;border:1px solid var(--line);font-size:20px;color:var(--muted)}
@@ -939,9 +939,6 @@
   .skill-actions .skill-done:hover{opacity:.87;background:var(--ink)}
 .gh-action{border:1px solid var(--line);border-radius:9px;font-size:11px;font-weight:650;padding:8px 10px;color:var(--ink);background:var(--panel)}
   .gh-action:hover,.gh-action:focus-visible{background:var(--grav-2);outline-offset:2px}
-  .github-dialog .github-field{display:flex;flex-direction:column;gap:7px;margin-top:16px}
-  .github-dialog .github-field label{font-size:12px;font-weight:600}
-  .github-dialog .github-field input{padding:10px 12px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:12px ui-monospace,Consolas,monospace;width:100%}
   .github-dialog .github-state{margin-top:14px;padding:10px 12px;border:1px solid var(--line);background:var(--panel);border-radius:9px;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
   .github-dialog .github-state.error{color:var(--red)}
   #deleteBtn[hidden],#nativeAppsBtn[hidden]{display:none}
@@ -1148,13 +1145,7 @@
     <button class="skill-x" id="githubCloseIcon" type="button" aria-label="Close GitHub dialog">&times;</button>
   </div>
   <div class="github-state" id="githubState" role="status" aria-live="polite">Checking GitHub connection...</div>
-  <div class="github-field">
-    <label for="githubWorkerUrl">Soil GitHub authentication service URL</label>
-    <input id="githubWorkerUrl" type="url" placeholder="https://your-auth-worker.example" autocomplete="url" spellcheck="false">
-  </div>
   <div class="skill-actions">
-    <button id="githubSave" type="button">Save URL</button>
-    <button id="githubDisconnect" type="button" hidden>Disconnect</button>
     <button id="githubConnect" class="skill-done" type="button">Connect GitHub</button>
     <button id="githubClose" type="button">Close</button>
   </div>

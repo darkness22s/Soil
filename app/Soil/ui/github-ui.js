@@ -2,11 +2,8 @@
   "use strict";
   var dialog = document.getElementById("githubDialog");
   var trigger = document.getElementById("githubBtn");
-  var worker = document.getElementById("githubWorkerUrl");
   var message = document.getElementById("githubState");
   var connect = document.getElementById("githubConnect");
-  var disconnect = document.getElementById("githubDisconnect");
-  var save = document.getElementById("githubSave");
   var timer = null;
   var last = null;
   var busy = false;
@@ -39,11 +36,7 @@
   function render(status) {
     var before = last && last.connected;
     last = status;
-    if (document.activeElement !== worker) worker.value = status.workerUrl || "";
-    connect.hidden = !!status.connected;
-    disconnect.hidden = !status.connected;
-    connect.disabled = busy || !!status.connecting;
-    save.disabled = busy;
+    connect.disabled = busy || !!status.connecting || !!status.connected;
     if (status.connected) {
       note("Connected as " + (status.login || "your GitHub account") + ". Private repositories are available.", false);
       stopPolling();
@@ -55,7 +48,7 @@
       note("Finish authorization in your browser. Soil will detect the connection automatically.", false);
       startPolling();
     } else if (!status.configured) {
-      note("Enter your Soil GitHub authentication service URL, then connect.", false);
+      note("GitHub sign-in is not configured for this installation.", true);
     } else {
       note("Not connected. Select Connect GitHub to sign in or reconnect.", false);
     }
@@ -75,19 +68,7 @@
 
   function setBusy(value) {
     busy = value;
-    save.disabled = value;
-    connect.disabled = value || !!(last && last.connecting);
-    disconnect.disabled = value;
-  }
-
-  function saveUrl() {
-    var url = worker.value.trim();
-    if (!url) return Promise.reject(new Error("Enter your Soil GitHub authentication service URL."));
-    if (last && last.connected && url !== last.workerUrl &&
-        !window.confirm("Changing the service URL will disconnect the current GitHub account. Continue?")) {
-      return Promise.reject(new Error("The service URL was not changed."));
-    }
-    return request("/api/github/config", "POST", { workerUrl: url }).then(render);
+    connect.disabled = value || !!(last && (last.connecting || last.connected));
   }
 
   trigger.addEventListener("click", function () {
@@ -99,21 +80,9 @@
   document.getElementById("githubCloseIcon").addEventListener("click", function () { dialog.close(); });
   dialog.addEventListener("close", stopPolling);
 
-  save.addEventListener("click", function () {
-    setBusy(true);
-    saveUrl().then(function () { note("Authentication service URL saved. You can now connect GitHub.", false); })
-      .catch(function (error) { note(error.message, true); })
-      .finally(function () { setBusy(false); });
-  });
-
   connect.addEventListener("click", function () {
     setBusy(true);
-    var desired = worker.value.trim();
-    var setup = !last || !last.configured || desired !== last.workerUrl
-      ? saveUrl() : Promise.resolve(last);
-    setup.then(function () {
-      return request("/api/github/connect", "POST", {});
-    }).then(function (status) {
+    request("/api/github/connect", "POST", {}).then(function (status) {
       render(status);
       if (status.connecting) startPolling();
     }).catch(function (error) {
@@ -121,11 +90,4 @@
     }).finally(function () { setBusy(false); });
   });
 
-  disconnect.addEventListener("click", function () {
-    if (!window.confirm("Disconnect GitHub from Soil?")) return;
-    setBusy(true);
-    request("/api/github/disconnect", "POST", {}).then(render).catch(function (error) {
-      note(error.message || "Could not disconnect.", true);
-    }).finally(function () { setBusy(false); });
-  });
 })();
