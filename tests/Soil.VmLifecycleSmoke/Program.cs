@@ -65,6 +65,24 @@ try
     }
     Console.WriteLine("APP: Create provisioned the 40-GiB ext4 volume without booting a VM.");
 
+    // Default and large tiers must also provision fully sized files, without
+    // starting hidden VMs or requiring mkfs inside the guest on first boot.
+    foreach (var (size, gigabytes) in new[] { ("m", 80), ("l", 160) })
+    {
+        var provisionTimer = Stopwatch.StartNew();
+        var other = manager.Create("Provision " + size, size);
+        var otherPath = paths.MachineDiskPath(other.Id);
+        if (other.Status != "stopped" || !File.Exists(otherPath) ||
+            new FileInfo(otherPath).Length != (long)gigabytes * 1024 * 1024 * 1024)
+            throw new InvalidOperationException($"Create did not provision the {gigabytes}-GiB disk.");
+        using var volume = new FileStream(otherPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        volume.Position = 1024 + 0x38;
+        if (volume.ReadByte() != 0x53 || volume.ReadByte() != 0xEF)
+            throw new InvalidOperationException($"The {gigabytes}-GiB image is not ext4.");
+        Console.WriteLine($"APP: Provisioned {gigabytes}-GiB ext4 in {provisionTimer.Elapsed.TotalMilliseconds:F1} ms.");
+    }
+    await AssertNoVmhostAsync();
+
     var initial = Stopwatch.StartNew();
     manager.Start(vmId);
     await WaitStatusAsync("running", 180);
