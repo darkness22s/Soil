@@ -36,3 +36,6 @@ jobs:
       - name: Boot guest and verify SSH and MCP forwards
         shell: pwsh
         run: .\engine\smoke-test.ps1 -ImagesDir $env:SOIL_IMAGES_DIR -SkipBuild
+      - name: Verify clean checkpoint, process exit and lazy restore
+        shell: pwsh
+        run: .\engine\snapshot-smoke-test.ps1 -ImagesDir $env:SOIL_IMAGES_DIR -SkipBuild

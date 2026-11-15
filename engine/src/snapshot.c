@@ -894,6 +894,49 @@ save_out2:
 }
 
 /* ------------------------------------------------------------------ */
+/* Pre-page the physical mappings backing the kernel's virtual interrupt
+   tables and stack. WHPX can fail interrupt delivery if an IDT/TSS/stack GPA
+   is absent before the first run, rather than emitting a recoverable normal
+   guest-memory exit. Only a handful of 64-KiB chunks are touched.
+
+   A Linux x86_64 snapshot uses a 4-level page table rooted at CR3. Both
+   1-GiB and 2-MiB huge page entries are handled. A failed page walk is
+   nonfatal; the vCPU run loop can still fault-in ordinary guest pages. */
+static int SnapReadGpa64(VH_VM *pVm, u64 gpa, u64 *puValue)
+{
+    if (gpa > pVm->mem.cbRam || pVm->mem.cbRam - gpa < 8 ||
+        VhSnapLazyLoad(pVm, gpa))
+        return 1;
+    memcpy(puValue, pVm->mem.pbRam + gpa, 8);
+    return 0;
+}
+
+static int SnapPrefetchVirtual(VH_VM *pVm, u64 cr3, u64 va)
+{
+    const u64 fPresent = 1;
+    const u64 fHuge = 0x80;
+    const u64 uAddrMask = 0x000FFFFFFFFFF000ULL;
+    u64 gpaTable = cr3 & uAddrMask;
+
+    for (int level = 4; level >= 1; level--)
+    {
+        unsigned shift = (unsigned)(12 + (level - 1) * 9);
+        u64 idx = (va >> shift) & 511;
+        u64 entry = 0;
+        if (SnapReadGpa64(pVm, gpaTable + idx * 8, &entry) ||
+            !(entry & fPresent))
+            return 1;
+        if (level == 1 || (level < 4 && (entry & fHuge)))
+        {
+            u64 offsetMask = (1ULL << shift) - 1;
+            u64 gpa = (entry & uAddrMask & ~offsetMask) | (va & offsetMask);
+            return VhSnapLazyLoad(pVm, gpa);
+        }
+        gpaTable = entry & uAddrMask;
+    }
+    return 1;
+}
+
 /* RESTORE                                                              */
 /* ------------------------------------------------------------------ */
 int VhSnapRestore(VH_VM *pVm, const char *pszPath, const VhSnapImgRefs *pRefs)
@@ -1393,6 +1436,46 @@ int VhSnapRestore(VH_VM *pVm, const char *pszPath, const VhSnapImgRefs *pRefs)
             if (VhSnapLazyLoad(pVm, uGpa) == 0)
                 cPre++;
         }
+        /* Saved RIP/RSP/IDT/TSS addresses are typically *virtual* addresses
+           in the high half of x86_64's address space. Translating them through
+           saved CR3 page tables is necessary before interrupt delivery. */
+        u64 cr3 = 0, efer = 0;
+        for (u32 i = 0; i < cRegs; i++)
+        {
+            if (aRegs[i].enm == WHvX64RegisterCr3)
+                cr3 = aRegs[i].val.Reg64;
+            else if (aRegs[i].enm == WHvX64RegisterEfer)
+                efer = aRegs[i].val.Reg64;
+        }
+        if (cr3 && (efer & (1ULL << 10))) /* EFER.LMA = long mode active */
+        {
+            for (u32 i = 0; i < cRegs; i++)
+            {
+                u64 va = 0;
+                switch (aRegs[i].enm)
+                {
+                case WHvX64RegisterRip:  va = aRegs[i].val.Reg64; break;
+                case WHvX64RegisterRsp:  va = aRegs[i].val.Reg64; break;
+                case WHvX64RegisterIdtr: va = aRegs[i].val.Table.Base; break;
+                case WHvX64RegisterGdtr: va = aRegs[i].val.Table.Base; break;
+                case WHvX64RegisterTr:   va = aRegs[i].val.Table.Base; break;
+                default: break;
+                }
+                if (!va)
+                    continue;
+                if (SnapPrefetchVirtual(pVm, cr3, va) == 0)
+                    cPre++;
+                /* The CPU can push an interrupt frame below RSP and read
+                   descriptors across a page boundary before the first exit. */
+                if (aRegs[i].enm == WHvX64RegisterRsp && va >= 8192 &&
+                    SnapPrefetchVirtual(pVm, cr3, va - 4096) == 0)
+                    cPre++;
+                if ((aRegs[i].enm == WHvX64RegisterIdtr ||
+                     aRegs[i].enm == WHvX64RegisterTr) &&
+                    SnapPrefetchVirtual(pVm, cr3, va + 4096) == 0)
+                    cPre++;
+            }
+        }
         /* the framebuffer is read host-side by the frame-copy thread; page
            it in now so the first frame after resume is already correct */
         if (pVm->mem.gpaFb && pVm->mem.cbFb)
@@ -1462,7 +1545,8 @@ int VhSnapLazyLoad(VH_VM *pVm, u64 uGpa)
     u64 cbChunk = pVm->mem.cbRam - uOff;
     if (cbChunk > VH_LAZY_CHUNK)
         cbChunk = VH_LAZY_CHUNK;
-    if (!(pVm->pbRamLoaded[iChunk >> 3] & (1u << (iChunk & 7))))
+    if (pVm->pbRamLoaded[iChunk >> 3] & (1u << (iChunk & 7)))
+        return 0; /* already loaded and mapped, including overlapping prefetches */
     {
         if (_fseeki64(pVm->pFileLazy, (LONGLONG)(SNAP_RAM_OFF + uOff), SEEK_SET) ||
             fread(pVm->mem.pbRam + uOff, 1, (size_t)cbChunk, pVm->pFileLazy) != (size_t)cbChunk)
@@ -1470,10 +1554,10 @@ int VhSnapLazyLoad(VH_VM *pVm, u64 uGpa)
             VhLog("snap: lazy page-in read failed @ GPA %#llx", (unsigned long long)uGpa);
             return 1;
         }
+        if (VhWhvMapRamChunk(pVm, uOff, pVm->mem.pbRam + uOff, cbChunk))
+            return 1;
         pVm->pbRamLoaded[iChunk >> 3] |= (u8)(1u << (iChunk & 7));
         pVm->cLazyChunks++;
     }
-    if (VhWhvMapMmioPage(pVm, uOff, pVm->mem.pbRam + uOff, cbChunk))
-        return 1;
     return 0;
 }

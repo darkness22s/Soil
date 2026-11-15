@@ -116,6 +116,9 @@ public sealed class SoilPaths
     public string MachineLogPath(string id) => Path.Combine(MachineLogDir(id), "vm.log");
     public string MachineDataDir(string id) => Path.Combine(MachineDir(id), "data");
     public string MachineDiskPath(string id) => Path.Combine(MachineDataDir(id), "disk.img");
+    // A stopped VM owns this snapshot; the running VM consumes it as an in-use file.
+    public string MachineSnapshotPath(string id) => Path.Combine(MachineDir(id), "resume.snap");
+    public string MachineRestorePath(string id) => Path.Combine(MachineDir(id), "resume.in-use.snap");
 
     public string EnsureMachine(string id)
     {

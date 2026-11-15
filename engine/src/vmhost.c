@@ -339,7 +339,10 @@ static bool VhHandleStringIo(VH_VM *pVm, const WHV_RUN_VP_EXIT_CONTEXT *pExit)
     u64 uOffset = fWrite ? pIo->Rsi : pIo->Rdi;
     i64 lStep;
     u64 k;
-    u64 uGpa0 = 0;
+    /* The vCPU is paused for this REP INS/OUTS exit; its page tables cannot
+       change until we return to WHPX. Translate each 4-KiB GVA page once. */
+    u64 uCachedGvaPage = UINT64_MAX;
+    u64 uCachedGpaPage = 0;
 
     if (s_cStrTrace < 48)
     {
@@ -369,15 +372,40 @@ static bool VhHandleStringIo(VH_VM *pVm, const WHV_RUN_VP_EXIT_CONTEXT *pExit)
         u64 uGpa;
         u32 uVal = 0;
 
-        if (!VhStringTranslateGva(pVm, uGva, &uGpa))
+        u64 uGvaPage = uGva & ~((u64)VH_PAGE - 1);
+        u32 cbFirst = VH_PAGE - (u32)(uGva & (VH_PAGE - 1));
+        u64 uGpaNext = 0;
+        if (uGvaPage != uCachedGvaPage)
         {
-            VhLog("strio: translate FAIL at iter %llu gva=%#llx",
-                  (unsigned long long)k, (unsigned long long)uGva);
-            break;
+            if (!VhStringTranslateGva(pVm, uGva, &uGpa))
+            {
+                VhLog("strio: translate FAIL at iter %llu gva=%#llx",
+                      (unsigned long long)k, (unsigned long long)uGva);
+                break;
+            }
+            uCachedGvaPage = uGvaPage;
+            uCachedGpaPage = uGpa - (uGva & (VH_PAGE - 1));
         }
-        if (k == 0)
-            uGpa0 = uGpa;
-        if (uGpa + cbWidth > pVm->mem.cbRam)
+        else
+            uGpa = uCachedGpaPage + (uGva & (VH_PAGE - 1));
+
+        if (cbFirst > cbWidth)
+            cbFirst = cbWidth;
+        /* If an element straddles a guest page boundary, the next physical
+           page may not be contiguous. Never memcpy across it blindly. */
+        if (cbFirst < cbWidth)
+        {
+            if (!VhStringTranslateGva(pVm, uGva + cbFirst, &uGpaNext))
+            {
+                VhLog("strio: cross-page translate FAIL gva=%#llx",
+                      (unsigned long long)(uGva + cbFirst));
+                break;
+            }
+            uCachedGvaPage = (uGva + cbFirst) & ~((u64)VH_PAGE - 1);
+            uCachedGpaPage = uGpaNext - ((uGva + cbFirst) & (VH_PAGE - 1));
+        }
+        if (uGpa + cbFirst > pVm->mem.cbRam ||
+            (cbFirst < cbWidth && uGpaNext + (cbWidth - cbFirst) > pVm->mem.cbRam))
         {
             VhLog("strio: gpa OOB at iter %llu gpa=%#llx", (unsigned long long)k,
                   (unsigned long long)uGpa);
@@ -386,21 +414,23 @@ static bool VhHandleStringIo(VH_VM *pVm, const WHV_RUN_VP_EXIT_CONTEXT *pExit)
 
         if (fWrite)
         {
-            memcpy(&uVal, pVm->mem.pbRam + uGpa, cbWidth);
+            memcpy(&uVal, pVm->mem.pbRam + uGpa, cbFirst);
+            if (cbFirst < cbWidth)
+                memcpy((u8 *)&uVal + cbFirst, pVm->mem.pbRam + uGpaNext,
+                       cbWidth - cbFirst);
             VhDevIoPort(pVm, uPort, true, cbWidth, &uVal);
         }
         else
         {
             VhDevIoPort(pVm, uPort, false, cbWidth, &uVal);
-            memcpy(pVm->mem.pbRam + uGpa, &uVal, cbWidth);
+            memcpy(pVm->mem.pbRam + uGpa, &uVal, cbFirst);
+            if (cbFirst < cbWidth)
+                memcpy(pVm->mem.pbRam + uGpaNext, (u8 *)&uVal + cbFirst,
+                       cbWidth - cbFirst);
         }
         uOffset += (u64)lStep;
     }
 
-    if (uPort == 0x310)
-        VhLog("strio end: port=%#x iters=%llu of %llu gpa0=%#llx",
-              uPort, (unsigned long long)k, (unsigned long long)cCount,
-              (unsigned long long)uGpa0);
 
     {
         WHV_REGISTER_NAME aenm[4] = { WHvX64RegisterRip, WHvX64RegisterRsi,
@@ -791,7 +821,9 @@ int main(int argc, char *argv[])
 
     if (VhWhvInit(pVm, 1))
         return 1;
-    if (VhWhvMapRam(pVm))
+    /* A snapshot restores RAM on fault, rather than allocating/mapping every
+       guest page before the first instruction. Cold boot maps all RAM. */
+    if (pszRestore ? VhWhvMapScratch(pVm) : VhWhvMapRam(pVm))
         return 1;
     if (VhWhvCreateCpu(pVm))
         return 1;
@@ -806,16 +838,30 @@ int main(int argc, char *argv[])
     if (pszRestore)
     {
         if (!VhSnapRestore(pVm, pszRestore, &snapRefs))
-        {
-            fRestored = true;
-            VhDevPostRestoreFixup(pVm);
-            Ne2000BindVm(pVm);
-        }
+            fRestored = true; /* restore already fixed up device callbacks */
         else
             VhLog("vmhost: snapshot restore failed; performing clean boot");
     }
     if (!fRestored)
     {
+        /* A bad/incompatible checkpoint may have loaded partial registers,
+           device state and lazy pages. Recreate the partition (rather than
+           unmapping a sparse GPA range) before starting a clean guest. */
+        if (pszRestore)
+        {
+            for (u32 i = 0; i < g_cDynMmioPages; i++)
+                VirtualFree(g_aDynMmio[i].pvPage, 0, MEM_RELEASE);
+            g_cDynMmioPages = 0;
+            VhWhvTerm(pVm);
+            memset(pVm->mem.pbRam, 0, (size_t)pVm->mem.cbRam);
+            memset(pVm->mem.pbScratch, 0, (size_t)pVm->mem.cbScratch);
+            VhDevResetState(pVm);
+            if (VhWhvInit(pVm, 1) || VhWhvMapRam(pVm) || VhWhvCreateCpu(pVm))
+            {
+                VhLog("vmhost: could not reset partition for cold boot");
+                return 1;
+            }
+        }
         if (VhGuestLoad(pVm, pszKernel, pszInitrd, pszCmdLine))
             return 1;
         if (VhGuestSetupCpu(pVm))
@@ -956,6 +1002,17 @@ int main(int argc, char *argv[])
             {
                 u64 uGpa = exitCtx.MemoryAccess.Gpa;
                 u32 uAccessType = exitCtx.MemoryAccess.AccessInfo.AccessType;   /* 0=read 1=write 2=exec */
+                if (pVm->fSnapRamLazy && uGpa < pVm->mem.cbRam &&
+                    !(uGpa >= 0xA0000 && uGpa < 0x100000))
+                {
+                    if (VhSnapLazyLoad(pVm, uGpa))
+                    {
+                        VhLog("vmhost: snapshot page-in failed at %#llx",
+                              (unsigned long long)uGpa);
+                        pVm->fStop = true;
+                    }
+                    break; /* retry the same guest instruction after page-in */
+                }
                 if (uAccessType == 2 || g_cDynMmioPages >= VMHOST_MAX_DYN_MMIO_PAGES)
                 {
                     VhLog("vmhost: unexpected memory access exit at GPA %#llx (type=%u rip=%#llx %u instr bytes: %02x %02x %02x %02x) - stopping",
@@ -1051,20 +1108,29 @@ int main(int argc, char *argv[])
     if (hInputThread)
         CloseHandle(hInputThread);
 
-    for (u32 i = 0; i < g_cDynMmioPages; i++)
-        VirtualFree(g_aDynMmio[i].pvPage, 0, MEM_RELEASE);
-
+    /* MMIO state is part of the checkpoint; keep its pages until saved. */
     VhLog("vmhost: stopped after %llu exits (io=%llu cpuid=%llu msr=%llu halt=%llu intwin=%llu exc=%llu canceled=%llu), %llu timer ticks",
           (unsigned long long)cExits, (unsigned long long)cIo, (unsigned long long)cCpuid,
           (unsigned long long)cMsr, (unsigned long long)cHalts, (unsigned long long)cIntWin,
           (unsigned long long)cExc, (unsigned long long)cCanceled, (unsigned long long)pVm->cTicks);
 
-    if (pszSnapshotOut)
+    /* Never replace a good snapshot with CPU/device state after an engine crash.
+       Only a host-initiated, clean stop is safe to checkpoint. */
+    int fSnapError = 0;
+    if (pszSnapshotOut && pVm->fCleanExit)
     {
         VhLog("vmhost: saving final snapshot to %s", pszSnapshotOut);
-        VhSnapSave(pVm, pszSnapshotOut, &snapRefs);
+        if (VhSnapSave(pVm, pszSnapshotOut, &snapRefs))
+        {
+            VhLog("vmhost: snapshot save failed; next start will cold boot");
+            fSnapError = 1;
+        }
     }
+    else if (pszSnapshotOut)
+        VhLog("vmhost: unclean exit; not saving snapshot");
 
+    for (u32 i = 0; i < g_cDynMmioPages; i++)
+        VirtualFree(g_aDynMmio[i].pvPage, 0, MEM_RELEASE);
     VhWhvTerm(pVm);
-    return 0;
+    return fSnapError;
 }

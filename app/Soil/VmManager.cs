@@ -107,6 +107,11 @@ public sealed class VmManager
                 CreatedUtc = DateTime.UtcNow
             };
             m_paths.EnsureMachine(record.Id);
+            // Set up the blank persistent ext4 volume at explicit machine
+            // creation, not during the first VM boot. The sparse template
+            // occupies only initialized filesystem sectors on NTFS.
+            PreformattedDisk.TryCreate(m_imagesDir,
+                m_paths.MachineDiskPath(record.Id), record.DiskGb);
             WriteMachineRecordLocked(record);
             m_records.Add(record);
             m_runtimes[record.Id] = new VmRuntime(record);
@@ -149,6 +154,11 @@ public sealed class VmManager
                 CreatedUtc = DateTime.UtcNow
             };
             m_paths.EnsureMachine(record.Id);
+            // Set up the blank persistent ext4 volume at explicit machine
+            // creation, not during the first VM boot. The sparse template
+            // occupies only initialized filesystem sectors on NTFS.
+            PreformattedDisk.TryCreate(m_imagesDir,
+                m_paths.MachineDiskPath(record.Id), record.DiskGb);
             WriteMachineRecordLocked(record);
             m_records.Add(record);
             m_runtimes[record.Id] = new VmRuntime(record);
@@ -188,6 +198,11 @@ public sealed class VmManager
                 CreatedUtc = DateTime.UtcNow
             };
             m_paths.EnsureMachine(record.Id);
+            // Set up the blank persistent ext4 volume at explicit machine
+            // creation, not during the first VM boot. The sparse template
+            // occupies only initialized filesystem sectors on NTFS.
+            PreformattedDisk.TryCreate(m_imagesDir,
+                m_paths.MachineDiskPath(record.Id), record.DiskGb);
             WriteMachineRecordLocked(record);
             m_records.Add(record);
             m_runtimes[record.Id] = new VmRuntime(record);
@@ -533,7 +548,22 @@ public sealed class VmManager
             runtime = m_runtimes[record.Id];
             if (runtime.Deleting)
                 return null;
+            // A Start arriving during checkpoint is recalled after the engine exits.
+            // Never race the snapshot writer by starting a second vmhost.
+            if (runtime.Status == "stopping")
+            {
+                if (runtime.Proc is { HasExited: false })
+                {
+                    runtime.RestartAfterStop = true;
+                    return BundleLocked(record);
+                }
+                // The prior engine has already exited but its StopAsync may not
+                // have observed it yet. Clean it now to avoid losing the recall.
+                CleanupLocked(runtime);
+                runtime.Status = "stopped";
+            }
             runtime.ParkPending = false;
+            runtime.RestartAfterStop = false;
             if (runtime.Proc is { HasExited: false } || runtime.Status == "starting")
                 return BundleLocked(record);
             runtime.StartCts?.Cancel();
@@ -543,6 +573,7 @@ public sealed class VmManager
             runtime.StartGeneration++;
             var generation = runtime.StartGeneration;
             runtime.Status = "starting";
+            runtime.LastUiActivityUtc = DateTime.UtcNow;
             runtime.Error = null;
             runtime.StartedUtc = DateTime.UtcNow;
             runtime.History.Clear();
@@ -573,6 +604,7 @@ public sealed class VmManager
             if (runtime.Deleting)
                 return null;
             runtime.ParkPending = false;
+            runtime.RestartAfterStop = false;
             runtime.StartCts?.Cancel();
             runtime.StatsCts?.Cancel();
             var proc = runtime.Proc;
@@ -716,6 +748,8 @@ public sealed class VmManager
                 runtime.StartCts?.Cancel();
                 runtime.StatsCts?.Cancel();
                 runtime.StartGeneration++;
+                runtime.RestartAfterStop = false;
+                runtime.ParkPending = false;
             }
             live = m_runtimes.Values.Where(r => r.Proc is { HasExited: false }).ToList();
             launches = m_runtimes.Values
@@ -732,6 +766,11 @@ public sealed class VmManager
         catch
         {
         }
+
+        // Launches may have created processes while cancellation was in flight.
+        // Re-read the live set so app shutdown cannot orphan a late vmhost.
+        lock (m_lock)
+            live = m_runtimes.Values.Where(r => r.Proc is { HasExited: false }).ToList();
 
         var syncs = new List<Task>();
         foreach (var runtime in live)
@@ -763,17 +802,21 @@ public sealed class VmManager
             }
         }
 
-        foreach (var runtime in live)
+        // Snapshot serialization can take several seconds on larger machines.
+        // Wait in parallel so exit time is bounded by one checkpoint, not VM count.
+        var exits = live.Select(runtime => Task.Run(() =>
         {
             try
             {
-                if (!runtime.Proc!.WaitForExit(3000))
+                if (!runtime.Proc!.WaitForExit(90000))
                     runtime.Proc.Kill(true);
             }
             catch
             {
+                KillQuietly(runtime.Proc);
             }
-        }
+        })).ToArray();
+        Task.WaitAll(exits);
 
         lock (m_lock)
         {
@@ -788,7 +831,10 @@ public sealed class VmManager
         {
             foreach (var runtime in m_runtimes.Values)
             {
-                if (runtime.Deleting || runtime.ParkPending || runtime.Status != "running")
+                // Imported apps and agent workers can still be serving requests
+                // while the window is unfocused; only park interactive desktops.
+                if (runtime.Deleting || runtime.ParkPending || runtime.Status != "running" ||
+                    !string.Equals(runtime.Record.Kind, "desktop", StringComparison.OrdinalIgnoreCase))
                     continue;
                 var proc = runtime.Proc;
                 if (proc is null || proc.HasExited)
@@ -829,6 +875,8 @@ public sealed class VmManager
     public byte[]? FrameJpeg(string id)
     {
         var runtime = FindRuntime(id);
+        if (runtime is not null)
+            runtime.LastUiActivityUtc = DateTime.UtcNow;
         return runtime?.GetJpeg();
     }
 
@@ -894,6 +942,7 @@ public sealed class VmManager
             }
         }
 
+        runtime.LastUiActivityUtc = DateTime.UtcNow;
         lock (runtime.InputLock)
         {
             for (var attempt = 0; attempt < 2; attempt++)
@@ -950,6 +999,9 @@ public sealed class VmManager
         var lastSent = -1;
         while (!ct.IsCancellationRequested)
         {
+            // An attached MJPEG viewer is actively using this guest, even
+            // when it isn't receiving keyboard or mouse input.
+            runtime.LastUiActivityUtc = DateTime.UtcNow;
             var (seq, jpeg) = runtime.GetJpegWithSequence();
             if (jpeg is not null && seq != lastSent)
             {
@@ -1008,7 +1060,7 @@ public sealed class VmManager
             psi.ArgumentList.Add(runtime.Record.RamMb.ToString());
             Directory.CreateDirectory(m_paths.MachineLogDir(runtime.Record.Id));
             psi.ArgumentList.Add("--cmdline");
-            psi.ArgumentList.Add("console=ttyS0 quiet loglevel=3 acpi=off noapic nolapic mitigations=off nozswap");
+            psi.ArgumentList.Add("console=ttyS0 quiet loglevel=3 acpi=off noapic nolapic mitigations=off nozswap idle=poll");
             psi.ArgumentList.Add("--log");
             psi.ArgumentList.Add(m_paths.MachineLogPath(runtime.Record.Id));
             psi.ArgumentList.Add("--no-ui");
@@ -1030,10 +1082,37 @@ public sealed class VmManager
             psi.ArgumentList.Add("--ipc");
             psi.ArgumentList.Add(token);
 
+            // A clean stop writes a durable snapshot, then exits completely.
+            // Consume the checkpoint on start: if a VM crashes, an old memory
+            // image can never be replayed against its now-modified data disk.
+            var snapshotPath = m_paths.MachineSnapshotPath(runtime.Record.Id);
+            var restorePath = m_paths.MachineRestorePath(runtime.Record.Id);
+            if (File.Exists(restorePath))
+                File.Delete(restorePath);
+            if (File.Exists(snapshotPath))
+            {
+                File.Move(snapshotPath, restorePath);
+                psi.ArgumentList.Add("--restore");
+                psi.ArgumentList.Add(restorePath);
+            }
+            psi.ArgumentList.Add("--snapshot-out");
+            psi.ArgumentList.Add(snapshotPath);
+
             proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
             proc.OutputDataReceived += (_, _) => { };
             proc.ErrorDataReceived += (_, _) => { };
-            proc.Start();
+            try
+            {
+                proc.Start();
+            }
+            catch
+            {
+                // An OS-level launch failure never executed guest instructions,
+                // so the original checkpoint is still safe to retry.
+                if (File.Exists(restorePath) && !File.Exists(snapshotPath))
+                    File.Move(restorePath, snapshotPath);
+                throw;
+            }
             proc.BeginOutputReadLine();
             proc.BeginErrorReadLine();
 
@@ -1220,19 +1299,30 @@ public sealed class VmManager
                 if (runtime.Status is "running" or "starting")
                     runtime.Error = $"The VM engine exited unexpectedly (code {proc.ExitCode}). " +
                                     $"Check {m_paths.MachineLogPath(runtime.Record.Id)}.";
+                var restart = runtime.RestartAfterStop && !runtime.Deleting;
+                runtime.RestartAfterStop = false;
                 runtime.Status = ConsumeParkLocked(runtime);
                 runtime.StartedUtc = null;
                 runtime.History.Clear();
                 CleanupLocked(runtime);
+                if (restart)
+                    _ = Task.Run(() => Start(runtime.Record.Id));
             }
         }
     }
 
-    private static string ConsumeParkLocked(VmRuntime runtime)
+    private string ConsumeParkLocked(VmRuntime runtime)
     {
         if (!runtime.ParkPending)
             return "stopped";
         runtime.ParkPending = false;
+        // Don't claim a VM is parked/restorable if the checkpoint writer
+        // failed (disk full, access denied, killed engine, etc.).
+        if (!File.Exists(m_paths.MachineSnapshotPath(runtime.Record.Id)))
+        {
+            runtime.Error = "VM stopped, but the checkpoint could not be saved. Next start will cold boot.";
+            return "stopped";
+        }
         return "idle";
     }
 
@@ -1263,7 +1353,7 @@ public sealed class VmManager
 
         try
         {
-            if (!await WaitForExitAsync(proc, TimeSpan.FromSeconds(20)))
+            if (!await WaitForExitAsync(proc, TimeSpan.FromSeconds(90)))
                 proc.Kill(true);
         }
         catch
@@ -1274,10 +1364,14 @@ public sealed class VmManager
         {
             if (ReferenceEquals(runtime.Proc, proc))
             {
+                var restart = runtime.RestartAfterStop && !runtime.Deleting;
+                runtime.RestartAfterStop = false;
                 runtime.Status = ConsumeParkLocked(runtime);
                 runtime.StartedUtc = null;
                 runtime.History.Clear();
                 CleanupLocked(runtime);
+                if (restart)
+                    _ = Task.Run(() => Start(runtime.Record.Id));
             }
         }
     }
@@ -1294,6 +1388,23 @@ public sealed class VmManager
                     var proc = runtime.Proc;
                     if (proc is null || runtime.Status != "running")
                         continue;
+
+                    // Park interactive desktops that have no active UI or
+                    // input requests, including VMs left unselected while
+                    // another Soil page or VM is in use. Agents/apps retain
+                    // background execution until explicitly stopped.
+                    if (string.Equals(runtime.Record.Kind, "desktop", StringComparison.OrdinalIgnoreCase) &&
+                        DateTime.UtcNow - runtime.LastUiActivityUtc > TimeSpan.FromSeconds(90) &&
+                        !runtime.ParkPending && !runtime.Deleting)
+                    {
+                        runtime.ParkPending = true;
+                        runtime.StartCts?.Cancel();
+                        runtime.StatsCts?.Cancel();
+                        runtime.Status = "stopping";
+                        _ = Task.Run(() => StopAsync(runtime, proc));
+                        continue;
+                    }
+
                     try
                     {
                         var now = DateTime.UtcNow;
@@ -1327,6 +1438,8 @@ public sealed class VmManager
         {
             runtime.Status = ConsumeParkLocked(runtime);
             runtime.StartedUtc = null;
+            runtime.History.Clear();
+            CleanupLocked(runtime);
         }
 
         var uptime = runtime.StartedUtc is null ? 0 :
@@ -1473,6 +1586,11 @@ public sealed class VmManager
         runtime.Proc = null;
         runtime.StartCts = null;
         runtime.LaunchTask = null;
+        // Restored snapshots are one-shot. A successful park produces a new
+        // resume.snap; a crash leaves no reusable memory state behind.
+        try { File.Delete(m_paths.MachineRestorePath(runtime.Record.Id)); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private async Task EnsureGuestGuiReadyAsync(
@@ -1489,18 +1607,23 @@ public sealed class VmManager
             key = m_sshKeyPath;
         }
 
-        if (port <= 0 || string.IsNullOrWhiteSpace(key) || !File.Exists(key))
+        // A desktop viewer can begin as soon as the guest actually paints
+        // pixels. SSH probing is slower and may block on desktop processes
+        // unrelated to rendering; keep that stronger gate for agent/app jobs.
+        if (string.Equals(runtime.Record.Kind, "desktop", StringComparison.OrdinalIgnoreCase) ||
+            (port <= 0 || string.IsNullOrWhiteSpace(key) || !File.Exists(key)))
         {
             var boot = Stopwatch.StartNew();
             while (boot.Elapsed < TimeSpan.FromSeconds(90))
             {
                 ct.ThrowIfCancellationRequested();
-                if (proc.HasExited || HasVisibleContent(bootView))
-                    break;
-                await Task.Delay(400, ct);
+                if (proc.HasExited)
+                    return;
+                if (HasVisibleContent(bootView))
+                    return;
+                await Task.Delay(50, ct);
             }
-            await Task.Delay(TimeSpan.FromSeconds(25), ct);
-            return;
+            throw new TimeoutException("The guest did not draw a desktop frame.");
         }
 
         const string probe =
@@ -1534,7 +1657,11 @@ public sealed class VmManager
                 view.ReadArray(offset, buffer, 0, buffer.Length);
                 for (var i = 0; i < buffer.Length; i += 4)
                 {
-                    if (buffer[i] != 0 || buffer[i + 1] != 0 || buffer[i + 2] != 0)
+                    // VhGuestLoad fills the framebuffer with 0x1f before
+                    // running any guest instruction. Do not treat that host
+                    // placeholder as a usable guest desktop.
+                    if (buffer[i] != 0x1f || buffer[i + 1] != 0x1f ||
+                        buffer[i + 2] != 0x1f)
                         return true;
                 }
             }
@@ -2211,10 +2338,12 @@ internal sealed class VmRuntime
     internal Task? LaunchTask;
     internal int StartGeneration;
     internal bool ParkPending;
+    internal bool RestartAfterStop;
     internal string Status = "stopped";
     internal bool Deleting;
     internal string? Error;
     internal DateTime? StartedUtc;
+    internal DateTime LastUiActivityUtc = DateTime.UtcNow;
     internal int SshPort;
     internal int McpPort;
     internal CancellationTokenSource? StatsCts;

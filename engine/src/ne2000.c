@@ -584,8 +584,6 @@ static void ne2000_dma_update(NE2000State *s, int len)
 
     if (s->rcnt <= (u16)len)
     {
-        if (s->rcnt != 0)
-            VhLog("ne2k: RDC SET (rcnt %u -> 0, len %d)", s->rcnt, len);
         s->rcnt = 0;
         /* signal end of transfer */
         s->isr |= ENISR_RDC;
