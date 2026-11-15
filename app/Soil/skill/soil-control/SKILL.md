@@ -66,6 +66,23 @@ $soil = (Get-Process -Name Soil | Select-Object -First 1 -ExpandProperty Path)
 
 Open Soil first if `$soil` is empty. Use IDs, not names. `s`/`m`/`l` VM sizes are supported. Commands return JSON or a nonzero exit code. Do not edit internal endpoint files or call undocumented internal APIs.
 
+## Native Linux apps inside an existing desktop VM
+
+In the **default Windows Soil app**, select a desktop VM and click **Linux
+apps** next to the VM controls. Import an **x86-64 Linux ELF** executable
+or **Type 2 AppImage** (up to 256 MiB). The file is stored with the VM,
+transferred through Soil's existing guest SSH tunnel and launched **inside the
+bundled Linux guest**. Import does not start the VM; press **Start** before
+choosing **Launch**. Imports are restored into the Linux desktop when a stopped
+VM is started again, but the guest processes do not auto-run.
+
+Native ELF binaries need compatible shared libraries inside Soil's minimal
+Tiny Core guest. This is not a Ubuntu/Debian package manager: `.deb`, `.rpm`,
+`.iso`, Windows EXEs, and shell install scripts are not supported. The
+native-application feature requires the bundled updated `core2.gz` image;
+Soil creates the guest SSH key automatically when needed. Only run binaries the user explicitly chose
+and trusts.
+
 ## Dependency and skill updates
 
 Linux automation delegates VNC/RFB control to bundled **vncdotool 1.4.2**, MIT licensed, https://github.com/sibson/vncdotool. The full upstream license is included at `app/linux/third-party/vncdotool-LICENSE.txt`. Computer use is invoked on demand; no automation process stays running while idle. See `app/linux/README.md`.

@@ -35,7 +35,10 @@ jobs:
         run: .\app\build.ps1 -ImagesDir $env:SOIL_IMAGES_DIR -Gcc $env:SOIL_GCC -SkipMsi
       - name: Boot guest and verify SSH and MCP forwards
         shell: pwsh
-        run: .\engine\smoke-test.ps1 -ImagesDir $env:SOIL_IMAGES_DIR -SkipBuild
+        run: |
+          python tools/soil-ci/inject-native-guest.py app/dist/Soil/images/core2.gz app/dist/Soil/images/core2.gz --verify
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled native guest launcher missing' }
+          .\engine\smoke-test.ps1 -ImagesDir (Join-Path $PWD 'app/dist/Soil/images') -SkipBuild
       - name: Verify clean checkpoint, process exit and lazy restore
         shell: pwsh
         run: .\engine\snapshot-smoke-test.ps1 -ImagesDir $env:SOIL_IMAGES_DIR -SkipBuild

@@ -1,0 +1,34 @@
+name: Boot real bundled Soil guest and execute native ELF
+
+on:
+  pull_request:
+    paths:
+      - 'app/images/**'
+      - 'soil-sdk/runtime/soil-native'
+      - 'tools/soil-ci/guest-native-smoke.sh'
+      - 'tools/soil-ci/GuestInitrdSmoke/**'
+      - 'tools/soil-ci/inject-native-guest.py'
+      - 'app/Soil/GuestInitrd.cs'
+      - '.github/workflows/native-guest-vm-boot.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  guest-native-boot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install QEMU x86 emulator
+        run: sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qemu-system-x86 gcc
+      - name: Boot actual packaged Linux guest and exercise native ELF lifecycle
+        run: bash tools/soil-ci/guest-native-smoke.sh app/images

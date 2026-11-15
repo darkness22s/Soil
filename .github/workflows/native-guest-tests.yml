@@ -1,0 +1,40 @@
+name: Bundled Soil Linux guest native apps
+
+on:
+  push:
+    paths:
+      - soil-sdk/runtime/soil-native
+      - tools/soil-ci/inject-native-guest.py
+      - tools/soil-ci/test_native_guest.py
+      - app/Soil/ui/native-ui.js
+      - app/Soil/ui/app.html
+      - .github/workflows/native-guest-tests.yml
+  pull_request:
+    paths:
+      - soil-sdk/runtime/soil-native
+      - tools/soil-ci/inject-native-guest.py
+      - tools/soil-ci/test_native_guest.py
+      - app/Soil/ui/native-ui.js
+      - app/Soil/ui/app.html
+      - .github/workflows/native-guest-tests.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test-launcher:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate initramfs patcher and guest native executable lifecycle
+        run: python3 -m unittest discover -s tools/soil-ci -p test_native_guest.py -v
+      - name: Validate guest launcher and default app UI JavaScript
+        run: |
+          sh -n soil-sdk/runtime/soil-native
+          node --check app/Soil/ui/native-ui.js
+          node --check app/Soil/ui/app-ui.js

@@ -71,6 +71,9 @@ public sealed class VmManager
 
     public SoilPaths Home => m_paths;
 
+    // Runs only when a guest reaches the desktop-ready state; never keeps a VM alive.
+    internal Func<string, CancellationToken, Task>? RestoreNativeApps { get; set; }
+
     public IReadOnlyList<VmDto> List()
     {
         lock (m_lock)
@@ -413,6 +416,50 @@ public sealed class VmManager
         }
         throw new InvalidOperationException(
             "Could not install and launch the app package in the machine.");
+    }
+
+    internal async Task DeployNativeLinuxAppAsync(
+        string machineId, string appId, string filePath, string displayName,
+        bool launch, CancellationToken ct)
+    {
+        var record = FindRecord(machineId);
+        if (record is null || !string.Equals(record.Kind, "desktop", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Choose an existing desktop VM.");
+        var endpoint = GetSshEndpoint(machineId);
+        if (endpoint is null)
+            throw new InvalidOperationException(
+                "Start the VM first. The guest SSH tunnel and key must be available to install Linux apps.");
+        if (!File.Exists(filePath))
+            throw new FileNotFoundException("The saved Linux application is missing.", filePath);
+
+        var (ssh, key, port) = endpoint.Value;
+        var remote = "/tmp/soil-native-" + appId;
+        if (!await CopyGuestFileAsync(port, key, filePath, remote, ct))
+            throw new InvalidOperationException("Could not transfer the app into the Soil Linux VM.");
+        var install = "command -v soil-native >/dev/null 2>&1 && " +
+                      "soil-native install " + ShellQuote(appId) + " " +
+                      ShellQuote(remote) + " " + ShellQuote(displayName) +
+                      "; rc=$?; rm -f " + ShellQuote(remote) + "; exit $rc";
+        if (!await RunGuestCommandAsync(port, key, install, 30, ct))
+            throw new InvalidOperationException(
+                "The guest native-app launcher is unavailable or rejected the executable. " +
+                "Rebuild/install Soil with the updated bundled guest image.");
+        if (launch && !await RunGuestCommandAsync(
+                port, key, "soil-native launch " + ShellQuote(appId), 30, ct))
+            throw new InvalidOperationException(
+                "The Linux application could not start in the guest. It may need shared libraries " +
+                "not included in the compact Soil Linux image.");
+    }
+
+    internal async Task RemoveNativeLinuxAppAsync(
+        string machineId, string appId, CancellationToken ct)
+    {
+        var endpoint = GetSshEndpoint(machineId);
+        if (endpoint is null)
+            return;
+        var (_, key, port) = endpoint.Value;
+        await RunGuestCommandAsync(port, key, "soil-native remove " +
+                                   ShellQuote(appId), 15, ct);
     }
 
     private async Task<bool> CopyGuestFileAsync(
@@ -1048,7 +1095,12 @@ public sealed class VmManager
             psi.ArgumentList.Add("--kernel");
             psi.ArgumentList.Add(Path.Combine(m_imagesDir, "vmlinuz64"));
             psi.ArgumentList.Add("--initrd");
-            psi.ArgumentList.Add(Path.Combine(m_imagesDir, "core2.gz"));
+            var initrd = Path.Combine(m_imagesDir, "core2.gz");
+            if (!string.IsNullOrEmpty(m_sshKeyPath) &&
+                File.Exists(m_sshKeyPath + ".pub"))
+                initrd = GuestInitrd.Prepare(initrd, m_paths.MachineDir(runtime.Record.Id),
+                                            m_sshKeyPath + ".pub");
+            psi.ArgumentList.Add(initrd);
             psi.ArgumentList.Add("--disk");
             psi.ArgumentList.Add(Path.Combine(m_imagesDir, "soil.squashfs"));
             var dataGb = runtime.Record.DiskGb > 0 ? runtime.Record.DiskGb : 40;
@@ -1228,6 +1280,13 @@ public sealed class VmManager
             }
 
             StartGuestStats(runtime);
+            if (RestoreNativeApps is { } restore)
+                _ = Task.Run(async () =>
+                {
+                    try { await restore(runtime.Record.Id, ct); }
+                    catch (OperationCanceledException) { }
+                    catch (Exception) { /* A failed restore must not crash or stop the VM. */ }
+                });
             _ = Task.Run(() => MonitorExitAsync(runtime, proc));
         }
         catch (OperationCanceledException)
@@ -1859,7 +1918,7 @@ public sealed class VmManager
                 using var memory = new MemoryStream();
                 stream.CopyTo(memory);
                 var bytes = memory.ToArray();
-                if (!File.Exists(path) || !File.ReadAllBytes(path).SequenceEqual(bytes))
+                if (!File.Exists(path))
                     File.WriteAllBytes(path, bytes);
             }
 
@@ -1873,8 +1932,43 @@ public sealed class VmManager
             }
 
             if (!File.Exists(path))
-                return "";
+            {
+                // Fresh installations have no private key bundled. Generate a
+                // per-user key; only its public half will enter guest images.
+                var generator = new ProcessStartInfo
+                {
+                    FileName = FindExecutable("ssh-keygen.exe"),
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+                foreach (var arg in new[] { "-q", "-t", "ed25519", "-f", path,
+                                             "-N", "", "-C", "soil-local" })
+                    generator.ArgumentList.Add(arg);
+                using var created = Process.Start(generator);
+                if (created is null || !created.WaitForExit(15000) || created.ExitCode != 0)
+                    return "";
+            }
             RestrictKeyPermissions(path);
+            if (!File.Exists(path + ".pub"))
+            {
+                var exporter = new ProcessStartInfo
+                {
+                    FileName = FindExecutable("ssh-keygen.exe"),
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+                exporter.ArgumentList.Add("-y");
+                exporter.ArgumentList.Add("-f");
+                exporter.ArgumentList.Add(path);
+                using var export = Process.Start(exporter);
+                if (export is null || !export.WaitForExit(10000) || export.ExitCode != 0)
+                    return "";
+                File.WriteAllText(path + ".pub", export.StandardOutput.ReadToEnd());
+            }
             return path;
         }
         catch
