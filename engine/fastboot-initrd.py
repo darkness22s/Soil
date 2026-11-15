@@ -26,6 +26,17 @@ def optimize_bootlocal(script):
     if b"SOIL_FASTBOOT_EARLY_SSH" in script:
         return script
 
+    # Swap setup need not gate an authenticated SSH connection: the guest
+    # has a full RAM allocation, and this block runs synchronously before
+    # nonessential extension hooks and desktop startup. Never run it
+    # concurrently with the writable-home filesystem initialization.
+    zram_begin = exactly_one(script, b"# zram is builtin; mknod")
+    zram_end = exactly_one(script, b"mount -t tmpfs -o size=192m")
+    zram = script[zram_begin:zram_end]
+    if b"mkswap /dev/zram0" not in zram or b"swapon /dev/zram0" not in zram:
+        raise ValueError("Guest swap initialization has changed")
+    script = script[:zram_begin] + script[zram_end:]
+
     net_begin = exactly_one(script, b"# network: PCI RTL8029")
     net_end = exactly_one(script, b"# remote-control services:")
     network = script[net_begin:net_end]
@@ -47,8 +58,8 @@ def optimize_bootlocal(script):
         raise ValueError("Guest SSH cannot start before persistent home mount")
 
     early = (b"# SOIL_FASTBOOT_EARLY_SSH: stable home and static image are mounted.\n"
-             b"# Start the remote service before optional extension hooks.\n"
-             b"mkdir -p /etc/dropbear\n" + network + ssh)
+             b"# Start the remote service before optional swap and extension hooks.\n"
+             b"mkdir -p /etc/dropbear\n" + network + ssh + zram)
     return script[:home_end] + early + script[home_end:]
 
 
