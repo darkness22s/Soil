@@ -1,4 +1,4 @@
-name: Build Soil 40-GiB sparse ext4 boot template
+name: Build Soil sparse ext4 boot templates
 
 on:
   push:
@@ -19,22 +19,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           lfs: false
-      - name: Generate a persistent ext4 volume, with no 40-GiB allocation
+      - name: Generate 80/160-GiB ext4 volumes without allocating full disks
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p generated
-          truncate -s 40G generated/soil-data.img
-          mkfs.ext4 -q -F -i 65536 -E lazy_itable_init=1,lazy_journal_init=1 generated/soil-data.img
-          python3 engine/pack-ext4-template.py generated/soil-data.img generated/data-ext4-40g.sparse.gz
-          ls -lh generated/data-ext4-40g.sparse.gz
-          echo 'SOIL_TEMPLATE_B64_BEGIN'
-          base64 -w96 generated/data-ext4-40g.sparse.gz
-          echo 'SOIL_TEMPLATE_B64_END'
-          test $(stat -c %s generated/data-ext4-40g.sparse.gz) -lt 50000000
-      - name: Upload preformatted disk template
+          for gb in 80 160; do
+            truncate -s "${gb}G" generated/soil-data.img
+            mkfs.ext4 -q -F -i 65536 -E lazy_itable_init=1,lazy_journal_init=1 generated/soil-data.img
+            python3 engine/pack-ext4-template.py generated/soil-data.img "generated/data-ext4-${gb}g.sparse.gz"
+            echo "SOIL_TEMPLATE_${gb}_B64_BEGIN"
+            base64 -w96 "generated/data-ext4-${gb}g.sparse.gz"
+            echo "SOIL_TEMPLATE_${gb}_B64_END"
+            test $(stat -c %s "generated/data-ext4-${gb}g.sparse.gz") -lt 50000000
+            rm -f generated/soil-data.img
+          done
+      - name: Upload preformatted disk templates
         uses: actions/upload-artifact@v4
         with:
-          name: soil-ext4-template-40g
-          path: generated/data-ext4-40g.sparse.gz
+          name: soil-ext4-template-larger-tiers
+          path: generated/*.sparse.gz
           retention-days: 7
