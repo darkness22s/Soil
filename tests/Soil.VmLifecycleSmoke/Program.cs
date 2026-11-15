@@ -53,6 +53,17 @@ try
     vmId = created.Id;
     if (created.Status != "stopped")
         throw new InvalidOperationException("A newly created VM must not auto-start.");
+    var dataDisk = paths.MachineDiskPath(vmId);
+    if (!File.Exists(dataDisk) ||
+        new FileInfo(dataDisk).Length != 40L * 1024 * 1024 * 1024)
+        throw new InvalidOperationException("Create did not prepare a full 40-GiB sparse ext4 volume.");
+    using (var disk = new FileStream(dataDisk, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+    {
+        disk.Position = 1024 + 0x38;
+        if (disk.ReadByte() != 0x53 || disk.ReadByte() != 0xEF)
+            throw new InvalidOperationException("The preformatted machine disk is not ext4.");
+    }
+    Console.WriteLine("APP: Create provisioned the 40-GiB ext4 volume without booting a VM.");
 
     var initial = Stopwatch.StartNew();
     manager.Start(vmId);
