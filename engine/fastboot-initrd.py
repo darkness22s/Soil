@@ -71,7 +71,18 @@ def optimize_bootlocal(script):
     )
     if result.count(original_swap) != 1:
         raise ValueError("Guest swap initialization changed")
-    return result.replace(original_swap, fast_swap)
+    result = result.replace(original_swap, fast_swap)
+    swapon = b"swapon /dev/zram0 2>/dev/null"
+    if result.count(swapon) != 1:
+        raise ValueError("Guest zram activation changed")
+    # The fast UUID optimization must never be mistaken for working swap if
+    # the guest's util-linux and BusyBox versions reject the swapon request.
+    verify = (
+        swapon + b"\n  if grep -q zram0 /proc/swaps; then\n"
+        b"    echo 'SOIL: zram active' > /dev/ttyS0\n"
+        b"  else\n    echo 'SOIL: zram activation FAILED' > /dev/ttyS0\n  fi"
+    )
+    return result.replace(swapon, verify)
 
 
 def optimize_cpio(data):
