@@ -53,6 +53,21 @@ if ((Resolve-Path -LiteralPath $imagesSource).Path -ne (Resolve-Path -LiteralPat
     Copy-Item -Path (Join-Path $imagesSource "*") -Destination $imagesDir -Force
 }
 
+# Optimize the bundled Tiny Core startup script at build time. This is never
+# run on an end-user machine: no Python installation is needed to use Soil.
+$fastBoot = Join-Path $root "engine\fastboot-initrd.py"
+$initrd = Join-Path $imagesDir "core2.gz"
+$python = Get-Command python -ErrorAction SilentlyContinue
+if ((Test-Path -LiteralPath $fastBoot) -and $python) {
+    & $python.Source $fastBoot $initrd $initrd
+    if ($LASTEXITCODE -ne 0) {
+        throw "Bundled guest fastboot image optimization failed."
+    }
+}
+elseif (Test-Path -LiteralPath $fastBoot) {
+    Write-Warning "Python 3 not found: bundling stock guest image (fastboot optimization unavailable)."
+}
+
 $readme = @"
 Soil 4.2.1 - private local build
 
