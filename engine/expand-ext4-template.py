@@ -33,7 +33,22 @@ def main():
                 size = struct.unpack("<Q", archive.read(8))[0]
                 if size != DISK_SIZE:
                     raise ValueError("Unexpected ext4 template disk size")
-                output.truncate(size)
+                # Python's CRT _chsize_s may physically zero-fill a 40-GiB
+                # sparse file. Use Win32 SetEndOfFile directly instead.
+                kernel = ctypes.windll.kernel32
+                set_pointer = kernel.SetFilePointerEx
+                set_pointer.argtypes = [
+                    ctypes.c_void_p, ctypes.c_longlong,
+                    ctypes.c_void_p, ctypes.c_ulong,
+                ]
+                set_pointer.restype = ctypes.c_int
+                set_end = kernel.SetEndOfFile
+                set_end.argtypes = [ctypes.c_void_p]
+                set_end.restype = ctypes.c_int
+                if not set_pointer(ctypes.c_void_p(handle), size, None, 0):
+                    raise ctypes.WinError()
+                if not set_end(ctypes.c_void_p(handle)):
+                    raise ctypes.WinError()
                 previous_end = 0
                 while True:
                     header = archive.read(12)
