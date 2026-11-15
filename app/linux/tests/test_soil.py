@@ -86,6 +86,43 @@ class LinuxHostTests(unittest.TestCase):
                 self.assertFalse(self.host.running)
 
 
+    def test_computer_use_token_created_private(self):
+        token = self.host.home / "keys" / "computer-use.token"
+        self.assertTrue(token.is_file())
+        self.assertEqual(token.stat().st_mode & 0o077, 0)
+        self.assertEqual(self.host.computer_token, soil.LinuxHost(self.home).computer_token)
+
+    def test_vncdotool_action_mapping_and_input_protection(self):
+        from app.linux import computer_use
+        command = computer_use.action_command
+        self.assertEqual(command({"action": "click", "x": 4, "y": 5, "button": "right"}),
+                         ["move", "4", "5", "click", "3"])
+        self.assertEqual(command({"action": "scroll", "x": 4, "y": 5,
+                                  "direction": "up", "steps": 2}),
+                         ["move", "4", "5", "click", "4", "click", "4"])
+        for supplied, upstream in (("backspace", "bsp"), ("alt", "lalt"),
+                                   ("ctrl-alt-delete", "ctrl-lalt-delete"),
+                                   ("win", "super")):
+            self.assertEqual(command({"action": "key", "key": supplied}), ["key", upstream])
+        for bad in ({"action": "click", "x": -1, "y": 2},
+                    {"action": "type", "text": ""}, {"action": "key", "key": "bogus"},
+                    {"action": "scroll", "x": 1, "y": 2, "direction": "down", "steps": 21}):
+            with self.assertRaises(computer_use.ComputerUseError):
+                command(bad)
+
+        captured = []
+        def fake_run(argv, **kwargs):
+            self.assertIn("vncdotool.command", argv)
+            self.assertIn("127.0.0.1::5993", argv)
+            self.assertIn("typefile", argv)
+            self.assertFalse(kwargs.get("shell", False))
+            captured.append(Path(argv[-1]).read_text(encoding="utf-8"))
+            return mock.Mock(returncode=0)
+        with mock.patch.object(computer_use.subprocess, "run", side_effect=fake_run):
+            computer_use.perform(5993, {"action": "type", "text": "a\nb\tc"})
+        self.assertEqual(captured, ["a\nb\tc"])
+
+
 class ServerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -147,6 +184,83 @@ class ServerTests(unittest.TestCase):
         status, data = self.request("GET", "/api/github/repos")
         self.assertEqual(status, 501)
 
+
+    def test_computer_use_requires_token_and_running_vm(self):
+        from app.linux import computer_use
+        vm = self.host.create("Agent VM", "tiny")
+        mid = vm["id"]
+        screenshot_url = "/api/vms/" + mid + "/computer/screenshot"
+        action_url = "/api/vms/" + mid + "/computer/action"
+        status, _ = self.request("GET", screenshot_url)
+        self.assertEqual(status, 401)
+        status, _ = self.request("POST", action_url, {"action": "click", "x": 1, "y": 2})
+        self.assertEqual(status, 401)
+        headers = {"Authorization": "Bearer " + self.host.computer_token}
+        status, _ = self.request("GET", screenshot_url, headers=headers)
+        self.assertEqual(status, 409)
+        status, _ = self.request("POST", action_url, {"action": "type", "text": "hi"}, headers)
+        self.assertEqual(status, 409)
+        self.assertFalse(self.host.running)
+
+        class FakeProc:
+            def poll(self):
+                return None
+        self.host.running[mid] = {"qemu": FakeProc(), "vnc_port": 5999}
+        try:
+            image = b"\x89PNG\r\n\x1a\n" + b"fake png"
+            with mock.patch.object(soil, "computer_screenshot", return_value=image) as capture:
+                status, data = self.request("GET", screenshot_url, headers=headers)
+                self.assertEqual(status, 200)
+                self.assertEqual(data, image)
+                capture.assert_called_once_with(5999)
+            with mock.patch.object(soil, "computer_perform") as act:
+                status, data = self.request("POST", action_url,
+                                            {"action": "click", "x": 10, "y": 20}, headers)
+                self.assertEqual(status, 200)
+                self.assertTrue(json.loads(data)["ok"])
+                act.assert_called_once_with(5999, {"action": "click", "x": 10, "y": 20})
+            with mock.patch.object(soil, "computer_perform",
+                                   side_effect=computer_use.ComputerUseError(400, "bad input")):
+                status, data = self.request("POST", action_url, {"action": "wrong"}, headers)
+                self.assertEqual(status, 400)
+                self.assertIn("bad input", json.loads(data)["error"])
+        finally:
+            self.host.running.pop(mid)
+
+
+    def test_agent_cli_discovers_endpoint_and_calls_api(self):
+        import contextlib
+        import io
+        from app.linux import computer_cli
+
+        vm = self.host.create("CLI", "m")
+        endpoint = self.host.home / "endpoint.json"
+        self.assertEqual(endpoint.stat().st_mode & 0o077, 0)
+        self.assertEqual(json.loads(endpoint.read_text())["url"], self.server.origin)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            self.assertEqual(computer_cli.main(["--home", str(self.host.home), "list"]), 0)
+        self.assertIn(vm["id"], stdout.getvalue())
+
+        class FakeProc:
+            def poll(self):
+                return None
+        self.host.running[vm["id"]] = {"qemu": FakeProc(), "vnc_port": 5910}
+        try:
+            with mock.patch.object(soil, "computer_perform") as act:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(computer_cli.main(["--home", str(self.host.home),
+                        "action", vm["id"], '{"action":"key","key":"enter"}']), 0)
+                act.assert_called_once_with(5910, {"action": "key", "key": "enter"})
+            with mock.patch.object(soil, "computer_screenshot",
+                                   return_value=b"\x89PNG\r\n\x1a\n" + b"test"):
+                output = self.host.home / "screen.png"
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(computer_cli.main(["--home", str(self.host.home),
+                        "screenshot", vm["id"], str(output)]), 0)
+                self.assertTrue(output.read_bytes().startswith(b"\x89PNG"))
+        finally:
+            self.host.running.pop(vm["id"])
 
 if __name__ == "__main__":
     unittest.main()

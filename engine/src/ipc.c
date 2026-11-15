@@ -155,6 +155,7 @@ static unsigned __stdcall VhIpcFrameThread(void *pvArg)
         if (g_pSh && g_pSh->uStop)
         {
             VhLog("ipc: host requested stop");
+            pVm->fCleanExit = true;
             pVm->fStop = true;
             VhWhvCancelRun(pVm);
             break;

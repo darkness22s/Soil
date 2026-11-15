@@ -135,6 +135,7 @@ static LRESULT CALLBACK VhViewerWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPA
     {
         case WM_CLOSE:
             VhLog("viewer: window closed - stopping the VM");
+            pV->pVm->fCleanExit = true;
             pV->pVm->fStop = true;
             VhWhvCancelRun(pV->pVm);
             DestroyWindow(hWnd);

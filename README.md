@@ -129,6 +129,82 @@ lives on a sparse data disk at `%USERPROFILE%\.soil\machines\<id>\data\disk.img`
 and survives stops and restarts; the system image stays read-only. Sign-in pages
 open in the machine's built-in browser.
 
+## Windows VM checkpoints and on-demand recall
+
+Windows desktop machines start **only on request**. On a clean Stop, Soil
+checkpoints the guest CPU, device state, and RAM to
+`~/.soil/machines/<id>/resume.snap` and exits the VM engine. A parked or
+stopped VM has no running `vmhost.exe` process and uses **no guest CPU or
+resident VM memory**; its snapshot and persistent data disk still occupy disk
+space. The Soil UI/server itself continues to use normal application resources.
+
+On the next explicit Start, Soil consumes the checkpoint, creates a fresh WHPX
+partition, restores CPU/device state, and loads guest RAM in 64-KiB chunks only
+as needed. If the checkpoint is invalid, the engine falls back to a cold boot.
+A one-shot in-use checkpoint is never replayed after a VM crash, because a
+disk might have changed since that snapshot.
+
+Interactive desktop VMs also **park automatically after 90 seconds with the
+Soil window minimized or unfocused**, or after 90 seconds without an active
+VM viewer or input request (for example, a VM left unselected while working
+elsewhere in Soil). Refocusing Soil does not wake them: press Start to recall
+the VM. Active app imports and AI-agent workers are
+excluded from automatic focus-based parking because their ongoing background
+work must not be silently interrupted; their Stop control still checkpoints
+and releases the VM. Closing Soil stops all remaining VMs.
+
+A true end-to-end boot from an exited process **cannot be guaranteed under
+5 milliseconds**: host process launch, WHPX setup, snapshot I/O, network
+startup, and guest readiness all have costs. The engine reports the internal
+snapshot restore duration separately from end-to-end guest-ready time.
+
+Interactive **desktop** machines now show their first *guest-drawn frame*
+without waiting for a separate SSH login/desktop-process probe, including when
+SSH forwarding is configured. Agent and app worker machines still wait for
+service readiness. **First drawn pixels are not proof that SSH, the desktop
+window manager, or every guest application is ready.**
+
+### Fast first boot without a background VM
+
+When you explicitly **create** a new VM on a Windows NTFS volume, Soil clones
+a preformatted ext4 filesystem from one of three bundled sparse templates:
+**40 GiB, 80 GiB (the default machine tier), or 160 GiB**. The compressed
+templates are approximately 87/166/283 KiB, respectively, and copying the
+initialized sectors requires only a few megabytes of actual disk space.
+The full selected disk size remains available to the guest. There is no
+guest process running during creation, and **existing data disks are never
+modified**. On a filesystem without sparse-file support or if a template is
+missing, the guest performs its original first-run formatting instead.
+
+The bundled Tiny Core image also starts static SSH before extension hooks,
+and initializes ephemeral zram swap without waiting to generate a random
+swap UUID. These tweaks are applied when preparing the Windows installer.
+Python 3 is required only to *build* the optimized initrd, not to run Soil;
+a local build without Python retains the stock guest startup script.
+
+For reproducible WHPX measurements, run this Windows x64 smoke test with
+Python 3 and the bundled guest images:
+
+```powershell
+.\engine\snapshot-smoke-test.ps1 -ImagesDir .\app\images
+```
+
+The Windows 2025 CI workflow
+(`.github/workflows/whpx-runtime-verification.yml`) tests actual Linux SSH
+readiness, a preformatted persistent data disk, snapshot save, complete VM
+engine exit, snapshot restore, and the app's Create/Start/Idle/Recall/Stop
+lifecycle. A November 2026 run recorded **3.35 seconds** for a fresh SSH-ready
+boot, **595 milliseconds** to restore from a parked snapshot, and **1.84
+seconds** for the first guest-drawn frame in the app. The tests are per-run
+measurements on nested virtualization, not guaranteed across all hardware.
+**Under two seconds for complete first-ever Linux/SSH readiness is still not
+achieved.** The first displayed guest frame is not proof that every application
+or service is initialized.
+
+The template generator is `engine/pack-ext4-template.py`, run on Linux after
+`mkfs.ext4` prepares a regular sparse image. The checked-in templates allow
+Windows installer builds and end-user creation without Linux tools.
+
 ## Build cache
 
 Imported static apps are cached under `~/.soil/cache/builds` by source archive
@@ -204,3 +280,8 @@ The `.sol` SDK lives in `soil-sdk`. See `soil-sdk/README.md` and
 `archive/` contains the earlier frontend prototype, the October 19 working
 report, and the public T3Code certificate kept for historical reference. These
 are not part of the Soil host build.
+
+On Linux, running VMs also expose a token-authenticated, on-demand
+[screenshot and computer-action API](app/linux/README.md#agent-computer-use-api-linux-vms)
+backed by bundled MIT-licensed vncdotool (see the
+[upstream license](app/linux/third-party/vncdotool-LICENSE.txt)).

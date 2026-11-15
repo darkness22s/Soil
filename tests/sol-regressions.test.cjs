@@ -35,15 +35,39 @@ test('GitHub can be connected after setup, reconnected, and disconnected', () =>
   assert.match(js, /soil:github-connected/);
 });
 
-test('VM startup avoids full-RAM autosnapshots and survives UI input drops', () => {
+test('VMs start on demand, restore single-use snapshots, and cleanly park when inactive', () => {
   const manager = read('app/Soil/VmManager.cs');
   const main = read('app/Soil/MainForm.cs');
+  const paths = read('app/Soil/SoilPaths.cs');
   const ipc = read('engine/src/ipc.c');
   const vmhost = read('engine/src/vmhost.c');
+  const snapshot = read('engine/src/snapshot.c');
+  const whv = read('engine/src/winhv.c');
   const launch = manager.slice(manager.indexOf('private async Task LaunchAsync'), manager.indexOf('private async Task MonitorExitAsync'));
-  assert.doesNotMatch(launch, /--snapshot-out|--restore/);
-  assert.doesNotMatch(main, /IdleAll\(\)|ResumeAll\(\)/);
+  assert.match(launch, /--snapshot-out/);
+  assert.match(launch, /--restore/);
+  assert.match(launch, /File\.Move\(snapshotPath, restorePath\)/);
+  assert.match(paths, /MachineSnapshotPath/);
+  assert.match(paths, /MachineRestorePath/);
+  assert.match(manager, /runtime\.RestartAfterStop = true/);
+  assert.match(manager, /runtime\.LastUiActivityUtc/);
+  assert.match(manager, /DateTime\.UtcNow - runtime\.LastUiActivityUtc > TimeSpan\.FromSeconds\(90\)/);
+  assert.match(main, /m_vmManager\.IdleAll\(\)/);
+  assert.doesNotMatch(main, /m_vmManager\.ResumeAll\(\)/);
+  assert.match(ipc, /fCleanExit = true/);
   assert.match(ipc, /input client disconnected; accepting a new connection/);
-  assert.doesNotMatch(ipc, /input client disconnected - stopping VM/);
+  assert.match(vmhost, /if \(pszSnapshotOut && pVm->fCleanExit\)/);
+  assert.match(vmhost, /VhSnapLazyLoad\(pVm, uGpa\)/);
+  assert.match(whv, /VhWhvMapRamChunk/);
+  assert.match(snapshot, /VhWhvMapRamChunk\(pVm, uOff/);
   assert.doesNotMatch(vmhost, /C:\\Users\\Lenovo|VhWriteFbBmp/);
+});
+
+test('WHPX smoke test checks a real guest ready signal and an exited vmhost', () => {
+  const smoke = read('engine/snapshot-smoke-test.ps1');
+  assert.match(smoke, /SSH-2/);
+  assert.match(smoke, /WaitForExit\(45000\)/);
+  assert.match(smoke, /snap: restored in/);
+  assert.match(smoke, /--restore/);
+  assert.match(smoke, /--snapshot-out/);
 });

@@ -53,6 +53,21 @@ if ((Resolve-Path -LiteralPath $imagesSource).Path -ne (Resolve-Path -LiteralPat
     Copy-Item -Path (Join-Path $imagesSource "*") -Destination $imagesDir -Force
 }
 
+# Optimize the bundled Tiny Core startup script at build time. This is never
+# run on an end-user machine: no Python installation is needed to use Soil.
+$fastBoot = Join-Path $root "engine\fastboot-initrd.py"
+$initrd = Join-Path $imagesDir "core2.gz"
+$python = Get-Command python -ErrorAction SilentlyContinue
+if ((Test-Path -LiteralPath $fastBoot) -and $python) {
+    & $python.Source $fastBoot $initrd $initrd
+    if ($LASTEXITCODE -ne 0) {
+        throw "Bundled guest fastboot image optimization failed."
+    }
+}
+elseif (Test-Path -LiteralPath $fastBoot) {
+    Write-Warning "Python 3 not found: bundling stock guest image (fastboot optimization unavailable)."
+}
+
 # Extend the EXISTING bundled Tiny Core initramfs with the native Linux app
 # launcher. Modify the published copy, never the private Git LFS source.
 $injectGuest = Join-Path $root "tools\soil-ci\inject-native-guest.py"
@@ -82,7 +97,7 @@ Use
 - Setup starts with no machines. Create your own VM with New VM, choose resources, press Start when ready, and click the screen to capture input.
 - Use the terminal + to create a 512 MB agent machine with Claude Code and Codex CLI, then open its SSH tunnel.
 - Agent home directories and sign-in state live on each machine data disk and survive restarts.
-- Machines run until explicitly stopped, including while Soil is minimized. Data disks persist across restarts; full-memory autosnapshots are disabled for stability.
+- Desktop machines park after 90 seconds without use or when the app stays unfocused. A parked machine writes a checkpoint and fully exits, releasing guest CPU and RAM. It restarts only when requested. Background app/agent workers are not automatically parked on UI focus loss. Data disks persist.
 - Sign-in pages open in the machine's built-in browser.
 - Use Linux apps in a selected desktop VM to import a native x86-64 ELF executable or Type 2 AppImage; it runs inside the guest, not on Windows.
 - Use the branch button to import a GitHub repository into its own app machine.
