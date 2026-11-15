@@ -1,0 +1,37 @@
+name: Build Soil 40-GiB sparse ext4 boot template
+
+on:
+  push:
+    branches: [feature/vm-snapshot-on-demand-parking]
+    paths:
+      - 'engine/pack-ext4-template.py'
+      - '.github/workflows/ext4-template-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  template:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+      - name: Generate a persistent ext4 volume, with no 40-GiB allocation
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p generated
+          truncate -s 40G generated/soil-data.img
+          mkfs.ext4 -q -F -i 65536 -E lazy_itable_init=1,lazy_journal_init=1 generated/soil-data.img
+          python3 engine/pack-ext4-template.py generated/soil-data.img generated/data-ext4-40g.sparse.gz
+          ls -lh generated/data-ext4-40g.sparse.gz
+          test $(stat -c %s generated/data-ext4-40g.sparse.gz) -lt 50000000
+      - name: Upload preformatted disk template
+        uses: actions/upload-artifact@v4
+        with:
+          name: soil-ext4-template-40g
+          path: generated/data-ext4-40g.sparse.gz
+          retention-days: 7
