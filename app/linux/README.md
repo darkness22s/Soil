@@ -12,7 +12,7 @@ On Ubuntu or Debian:
 
 ```sh
 sudo apt update
-sudo apt install python3 qemu-system-x86 qemu-utils novnc websockify
+sudo apt install python3 python3-pip qemu-system-x86 qemu-utils novnc websockify
 ```
 
 Run from the source checkout:
@@ -81,3 +81,53 @@ builds a `Soil-Linux-x86_64.tar.gz` artifact and launches the host with a
 health check on an Ubuntu runner. The stub-QEMU unit test checks process
 management, *not* actual guest boot. A true guest-boot test requires the private
 Git LFS images and a suitable virtualization-capable runner.
+
+## Agent computer use (Linux VMs)
+
+Soil bundles the upstream [vncdotool 1.4.2](https://github.com/sibson/vncdotool)
+(MIT license) for VNC/RFB screenshots and mouse/keyboard input. Soil only
+provides a thin HTTP adapter and on-demand CLI; neither runs an automation
+worker while idle. The original MIT license is preserved in
+`app/linux/third-party/vncdotool-LICENSE.txt` (also in the tarball).
+
+The easiest interface for local agents is the packaged `soil computer` command.
+It discovers the current random API port from `~/.soil/endpoint.json` and reads
+the token privately from `~/.soil/keys/computer-use.token`. Both files are mode
+0600 and use `SOIL_HOME` if the host has a custom home. No manual curl headers
+or port lookup are needed:
+
+```bash
+soil computer list
+soil computer screenshot <vm-id> screen.png
+soil computer action <vm-id> '{"action":"click","x":250,"y":150}'
+soil computer action <vm-id> '{"action":"type","text":"hello world"}'
+soil computer action <vm-id> '{"action":"key","key":"enter"}'
+```
+
+The same functionality is exposed for API clients:
+
+- `GET /api/vms`: list machine IDs and statuses.
+- `GET /api/vms/{id}/computer/screenshot`: `image/png`.
+- `POST /api/vms/{id}/computer/action`: JSON body with `action` =
+  `move`, `click`, `double_click`, `scroll`, `type`, or `key`.
+  The response is `{"ok":true}`.
+
+The computer endpoints require `Authorization: Bearer <token>` and
+`Content-Type: application/json` for POST. Token and endpoint files are local
+to the Soil user; never expose the service or its token publicly. Mouse
+coordinates are absolute screenshot pixels. A stopped VM returns HTTP 409
+without waking it. Screenshot after each action to check its effect.
+
+```sh
+BASE=$(python3 -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/".soil/endpoint.json").read_text())["url"])')
+VM_ID=your-32-character-vm-id
+TOKEN=$(cat ~/.soil/keys/computer-use.token)
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+    "$BASE/api/vms/$VM_ID/computer/screenshot" -o screen.png
+unset TOKEN
+```
+
+Builds vendor vncdotool and its dependencies directly into the Linux tarball,
+so **no installation or network fetch occurs when computer use is called**.
+The Ubuntu 24.04 artifact is built with Python 3.12; build on another target
+system when its Python ABI differs. Existing browser noVNC control is unchanged.

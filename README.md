@@ -147,3 +147,8 @@ The `.sol` SDK lives in `soil-sdk`. See `soil-sdk/README.md` and
 `archive/` contains the earlier frontend prototype, the October 19 working
 report, and the public T3Code certificate kept for historical reference. These
 are not part of the Soil host build.
+
+On Linux, running VMs also expose a token-authenticated, on-demand
+[screenshot and computer-action API](app/linux/README.md#agent-computer-use-api-linux-vms)
+backed by bundled MIT-licensed vncdotool (see the
+[upstream license](app/linux/third-party/vncdotool-LICENSE.txt)).
