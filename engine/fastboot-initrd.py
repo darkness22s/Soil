@@ -60,9 +60,18 @@ def optimize_bootlocal(script):
     early = (b"# SOIL_FASTBOOT_EARLY_SSH: stable home and static image are mounted.\n"
              b"# Start the remote service before optional swap and extension hooks.\n"
              b"mkdir -p /etc/dropbear\n" + network + ssh + zram)
-    # Retain the original mke2fs flags for machines without a preformatted
-    # disk template; existing disks are never reformatted or truncated.
-    return script[:home_end] + early + script[home_end:]
+    # zram is recreated empty at every boot; its UUID must not wait for
+    # entropy. The fallback retains support for older BusyBox mkswap builds.
+    # This affects only ephemeral RAM swap, never the persistent ext4 disk.
+    result = script[:home_end] + early + script[home_end:]
+    original_swap = b"mkswap /dev/zram0 >/dev/null 2>&1"
+    fast_swap = (
+        b"mkswap -U 00000000-0000-4000-8000-000000000001 "
+        b"/dev/zram0 >/dev/null 2>&1 || " + original_swap
+    )
+    if result.count(original_swap) != 1:
+        raise ValueError("Guest swap initialization changed")
+    return result.replace(original_swap, fast_swap)
 
 
 def optimize_cpio(data):
