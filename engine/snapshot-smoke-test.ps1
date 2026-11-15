@@ -145,7 +145,18 @@ try {
     }
     $firstLog = Join-Path $directory "first.log"
     Start-Guest $firstLog ""
+    # Give the fast first-boot swap script a chance to finish before taking
+    # a durable checkpoint. The measured SSH-ready time is already recorded.
+    Start-Sleep -Milliseconds 250
     Stop-GuestClean
+    $guestBoot = Get-Content -LiteralPath "$firstLog.serial" -Raw
+    if ($guestBoot -notmatch "SOIL: persistent home up") {
+        throw "Fresh preformatted ext4 home was not mounted successfully."
+    }
+    if ($guestBoot -notmatch "SOIL: zram active") {
+        throw "The guest did not enable zram swap after fast initialization."
+    }
+    Write-Host "PASS: preformatted persistent home mounted and zram swap active."
 
     Move-Item -LiteralPath $snapshot -Destination $consumed
     $secondLog = Join-Path $directory "restore.log"
