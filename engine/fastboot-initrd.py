@@ -60,16 +60,16 @@ def optimize_bootlocal(script):
     early = (b"# SOIL_FASTBOOT_EARLY_SSH: stable home and static image are mounted.\n"
              b"# Start the remote service before optional swap and extension hooks.\n"
              b"mkdir -p /etc/dropbear\n" + network + ssh + zram)
-    # First-run 40-GB sparse ext4 initialization is the remaining main cold
-    # boot bottleneck. 1 inode / 128 KiB keeps >300,000 file slots while
-    # halving the metadata compared with the image's original density.
-    # Existing, already-formatted data disks are never reformatted.
+    # Brand-new Soil data disks are zero-filled sparse files. Do not ask
+    # mke2fs to discard the entire virtual device again at first boot.
+    # Keep the original inode density and the journal; preexisting ext4
+    # disks are never reformatted by the guest's existing boot logic.
     result = script[:home_end] + early + script[home_end:]
-    original_density = b"mke2fs -q -t ext4 -F -i 65536 -E lazy_itable_init=1"
-    new_density = b"mke2fs -q -t ext4 -F -i 131072 -E lazy_itable_init=1"
-    if result.count(original_density) != 1:
+    original_mkfs = b"-i 65536 -E lazy_itable_init=1,lazy_journal_init=1"
+    optimized_mkfs = b"-i 65536 -E nodiscard,lazy_itable_init=1,lazy_journal_init=1"
+    if result.count(original_mkfs) != 1:
         raise ValueError("Guest first-boot ext4 mkfs command changed")
-    return result.replace(original_density, new_density)
+    return result.replace(original_mkfs, optimized_mkfs)
 
 
 def optimize_cpio(data):
