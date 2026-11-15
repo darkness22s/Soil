@@ -13,7 +13,7 @@ namespace Soil;
 internal static class PreformattedDisk
 {
     private const uint FsctlSetSparse = 0x000900c4;
-    private const long Bytes40GiB = 40L * 1024 * 1024 * 1024;
+    private const long GiB = 1024L * 1024 * 1024;
     private const int MaxExtentBytes = 1024 * 1024;
     private static readonly byte[] Magic = Encoding.ASCII.GetBytes("SOILX4P1");
 
@@ -23,14 +23,16 @@ internal static class PreformattedDisk
         SafeFileHandle handle, uint code, IntPtr input, uint inputBytes,
         IntPtr output, uint outputBytes, out uint bytesReturned, IntPtr overlapped);
 
-    /// <returns>True if the new 40-GiB disk was provisioned. False when this
+    /// <returns>True if a new disk was provisioned. False when this
     /// machine size, filesystem, or installation has no applicable template.</returns>
     internal static bool TryCreate(string imagesDir, string diskPath, int diskGb)
     {
-        if (!OperatingSystem.IsWindows() || diskGb != 40 || File.Exists(diskPath))
+        if (!OperatingSystem.IsWindows() || diskGb is not (40 or 80 or 160) ||
+            File.Exists(diskPath))
             return false;
 
-        var source = Path.Combine(imagesDir, "data-ext4-40g.sparse.gz");
+        var source = Path.Combine(imagesDir, $"data-ext4-{diskGb}g.sparse.gz");
+        long diskBytes = diskGb * GiB;
         if (!File.Exists(source))
             return false;
 
@@ -42,7 +44,7 @@ internal static class PreformattedDisk
                        FileAccess.ReadWrite, FileShare.None))
             {
                 // File.SetLength on a normal Windows file would reserve the
-                // whole 40-GiB volume. Fall back to guest mkfs on non-NTFS.
+                // whole disk. Fall back to guest mkfs on non-NTFS.
                 if (!DeviceIoControl(target.SafeFileHandle, FsctlSetSparse,
                         IntPtr.Zero, 0, IntPtr.Zero, 0, out _, IntPtr.Zero))
                     return false;
@@ -51,10 +53,10 @@ internal static class PreformattedDisk
                 using var input = new BinaryReader(gzip, Encoding.ASCII);
                 if (!input.ReadBytes(Magic.Length).SequenceEqual(Magic))
                     throw new InvalidDataException("Invalid Soil ext4 template header.");
-                if (input.ReadInt64() != Bytes40GiB)
+                if (input.ReadInt64() != diskBytes)
                     throw new InvalidDataException("Unexpected Soil ext4 template size.");
 
-                target.SetLength(Bytes40GiB);
+                target.SetLength(diskBytes);
                 long lastEnd = 0;
                 long written = 0;
                 while (true)
@@ -64,7 +66,7 @@ internal static class PreformattedDisk
                     if (count == 0 && offset == 0)
                         break;
                     if (count < 1 || count > MaxExtentBytes || offset < lastEnd ||
-                        offset > Bytes40GiB - count)
+                        offset > diskBytes - count)
                         throw new InvalidDataException("Invalid or overlapping ext4 template extent.");
 
                     var bytes = input.ReadBytes(count);
