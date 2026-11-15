@@ -7,11 +7,12 @@ if (args.Length != 1)
 var baseDir = Path.GetFullPath(args[0]);
 var home = Path.Combine(Path.GetTempPath(), "soil-vm-lifecycle-" + Guid.NewGuid().ToString("N"));
 var paths = new SoilPaths(home);
-// Exercise the desktop fast-display path even when SSH forwarding is enabled.
-// The desktop must not wait for SSH credentials or agent service readiness.
-Directory.CreateDirectory(paths.SshDir);
-File.WriteAllText(paths.SshKeyPath, "test-only-not-a-valid-ssh-private-key");
+// Exercise the desktop fast-display path with SSH forwarding enabled.
+// Native guest support now needs a valid private/public Ed25519 key pair;
+// verify the new-install key generator rather than supplying a bogus key.
 var manager = new VmManager(baseDir, paths);
+if (!File.Exists(paths.SshKeyPath) || !File.Exists(paths.SshKeyPath + ".pub"))
+    throw new InvalidOperationException("Fresh installation did not generate SSH credentials.");
 var vmId = "";
 
 async Task<VmDto> WaitStatusAsync(string expected, int timeoutSeconds)
