@@ -59,6 +59,8 @@ jobs:
             @{ Name='images/vmlinuz64'; Minimum=7000000 },
             @{ Name='images/core2.gz'; Minimum=18000000 },
             @{ Name='images/data-ext4-40g.sparse.gz'; Minimum=80000 },
+            @{ Name='images/data-ext4-80g.sparse.gz'; Minimum=150000 },
+            @{ Name='images/data-ext4-160g.sparse.gz'; Minimum=250000 },
             @{ Name='images/soil.squashfs'; Minimum=400000000 },
             @{ Name='ui/app.html'; Minimum=20000 },
             @{ Name='ui/skill-ui.js'; Minimum=1000 },
