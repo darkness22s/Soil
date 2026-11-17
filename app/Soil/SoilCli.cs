@@ -15,6 +15,17 @@ internal static class SoilCli
 
     public static int Run(string[] args, SoilPaths paths)
     {
+        // MCP clients launch Soil.exe with redirected stdin/stdout pipes, not an
+        // interactive parent console. Preserve the inherited handles and never
+        // print non-protocol output to stdout.
+        if (args.Length == 3 && args[0] == "vm" &&
+            args[1] == "computer" && args[2] == "mcp")
+        {
+            Console.SetIn(new StreamReader(Console.OpenStandardInput()));
+            Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
+            Console.SetError(new StreamWriter(Console.OpenStandardError()) { AutoFlush = true });
+            return RunCommandLine(args, paths);
+        }
         if (!AttachConsole(AttachParentProcess))
             return RunWithoutConsole(args, paths);
         Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
@@ -64,7 +75,7 @@ internal static class SoilCli
             return 1;
         }
         catch (Exception ex) when (ex is IOException or JsonException or HttpRequestException or
-                                   InvalidOperationException or UriFormatException)
+                                   InvalidOperationException or UriFormatException or ArgumentException)
         {
             Console.Error.WriteLine($"Soil command failed: {ex.Message}");
             return 1;
