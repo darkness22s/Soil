@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../app/Soil/SoilCli.cs" Link="SoilCli.cs" />
+    <Compile Include="../../app/Soil/SoilComputerCli.cs" Link="SoilComputerCli.cs" />
   </ItemGroup>
 </Project>
