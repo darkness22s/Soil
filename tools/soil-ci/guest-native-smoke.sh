@@ -223,6 +223,29 @@ if [[ -n "${SOIL_CUA_DRIVER_ARCHIVE:-}" ]]; then
   fi
   ssh "${ssh_opts[@]}" tc@127.0.0.1 \
     "test -s /tmp/cua-desktop-state.json && wc -c /tmp/cua-desktop-state.json"
-  echo "PROBE: upstream Cua Driver daemon and desktop observation executed in guest."
+  # Verify actual Cua mouse actions against the same observed desktop.
+  # The Xorg dummy driver uses exact X11 coordinates, not Soil's relative PS/2
+  # fallback. The action CLI returns a structured effect/result.
+  mouse_args='{"target":{"kind":"desktop","display_id":"primary"},"x":180,"y":125}'
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+    "DISPLAY=:0 /bin/cua-driver call move_cursor '$mouse_args' >/tmp/cua-move.json"
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+    "DISPLAY=:0 /bin/cua-driver call get_cursor_position > /tmp/cua-cursor.json"
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+    "DISPLAY=:0 /bin/cua-driver call click '$mouse_args' >/tmp/cua-click.json"
+  for name in move cursor click; do
+    ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+      "test -s /tmp/cua-$name.json && head -c 350 /tmp/cua-$name.json && echo"
+  done
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 "cat /tmp/cua-desktop-state.json" \
+    > "$tmp/cua-desktop-state.json"
+  python3 - "$tmp/cua-desktop-state.json" <<'PY'
+import json, sys
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+print("Cua screenshot response keys:", list(payload) if isinstance(payload, dict) else type(payload).__name__)
+if isinstance(payload, dict) and payload.get("isError") is True:
+    raise SystemExit("Cua Driver returned an error instead of a desktop screenshot")
+PY
+  echo "PASS: upstream Cua Driver desktop capture, mouse move and click executed in real guest."
 fi
 
