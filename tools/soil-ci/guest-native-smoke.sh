@@ -162,3 +162,19 @@ ssh "${ssh_opts[@]}" tc@127.0.0.1 "! /bin/soil list | grep -q org.soil.smoke"
 cat "$tmp/BusyBox.sol" | ssh "${ssh_opts[@]}" tc@127.0.0.1 "cat > /tmp/BusyBox.sol"
 ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/soil run /tmp/BusyBox.sol | grep -x soil-third-party-ok"
 echo "PASS: real bundled Soil guest boot; raw ELF, native .sol lifecycle, and third-party BusyBox binary."
+
+if [[ -n "${SOIL_CUA_DRIVER_ARCHIVE:-}" ]]; then
+  echo "PROBE: verified upstream Cua Driver inside the actual Soil Linux VM"
+  mkdir -p "$tmp/cua-driver"
+  tar -xzf "$SOIL_CUA_DRIVER_ARCHIVE" -C "$tmp/cua-driver"
+  driver_binary="$(find "$tmp/cua-driver" -type f -name cua-driver -print -quit)"
+  [[ -n "$driver_binary" ]] || { echo "Upstream Cua release has no driver binary" >&2; exit 1; }
+  file "$driver_binary" || true
+  cat "$driver_binary" | ssh "${ssh_opts[@]}" tc@127.0.0.1     "cat > /tmp/cua-driver && chmod 755 /tmp/cua-driver"
+  ssh "${ssh_opts[@]}" tc@127.0.0.1     "getconf GNU_LIBC_VERSION; printf 'DISPLAY=%s\\n' \"\$DISPLAY\"; ldd /tmp/cua-driver || true"
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 /tmp/cua-driver --version"
+  # Doctor must not be mistaken for execution success; it may report warnings.
+  ssh "${ssh_opts[@]}" tc@127.0.0.1     "DISPLAY=:0 /tmp/cua-driver doctor"
+  echo "PROBE: upstream Cua Driver runs in the guest; verify desktop actions separately."
+fi
+
