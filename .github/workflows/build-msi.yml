@@ -47,17 +47,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: soil-linux-guest-cli
-          path: tools/soil-ci/out
-      - name: Extract and verify guest runtime bundle
-        shell: pwsh
-        run: |
-          tar -xzf tools/soil-ci/out/guest-runtime.tar.gz -C tools/soil-ci/out
-          if ($LASTEXITCODE -ne 0) { throw 'Could not extract Linux guest runtime bundle' }
-          foreach ($file in @('soil','cua-driver','dummy_drv.so','xf86-video-dummy-LICENSE.txt')) {
-            if (-not (Test-Path -LiteralPath (Join-Path 'tools/soil-ci/out' $file))) {
-              throw "Guest runtime artifact missing: $file"
-            }
-          }/guest-runtime.tar.gz
+          path: tools/soil-ci/out/guest-runtime.tar.gz
           if-no-files-found: error
 
   build:
@@ -74,6 +64,16 @@ jobs:
         with:
           name: soil-linux-guest-cli
           path: tools/soil-ci/out
+      - name: Extract and verify Linux guest runtime
+        shell: pwsh
+        run: |
+          tar -xzf tools/soil-ci/out/guest-runtime.tar.gz -C tools/soil-ci/out
+          if ($LASTEXITCODE -ne 0) { throw 'Could not extract Linux runtime bundle' }
+          foreach ($file in @('soil','cua-driver','dummy_drv.so','xf86-video-dummy-LICENSE.txt')) {
+            if (-not (Test-Path -LiteralPath (Join-Path 'tools/soil-ci/out' $file))) {
+              throw "Guest runtime artifact missing: $file"
+            }
+          }
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v4
