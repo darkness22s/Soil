@@ -273,8 +273,8 @@ internal static class Program
         });
         SoilComputerCli.AddCuaContent(blocks, output);
         var json = JsonSerializer.Serialize(blocks);
-        Check(blocks.Count == 2 && json.Contains("\\"type\\":\\"image\\"") &&
-              json.Contains("\\"mimeType\\":\\"image/png\\""),
+        Check(blocks.Count == 2 && json.Contains("image/png") &&
+              json.Contains("iVBORw0KGgo="),
               "The Cua MCP bridge must return native screenshot image blocks.");
         var plain = new List<object>();
         SoilComputerCli.AddCuaContent(plain, "Cua Driver list-tools");
