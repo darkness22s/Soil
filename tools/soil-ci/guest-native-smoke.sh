@@ -182,50 +182,28 @@ if [[ -n "${SOIL_CUA_DRIVER_ARCHIVE:-}" ]]; then
      for bin in Xorg Xvesa Xfbdev Xvfb startx xinit dbus-daemon; do \
        command -v \$bin || true; done; \
      ls /usr/local/etc/X11 /home/tc/.xsession /home/tc/.xinitrc 2>&1 || true" || true
-  # The guest may boot in a serial-console session without starting an X
-  # display. Start the shipped desktop and verify the X socket exists.
+  # The direct kernel boot has no kernel fb0 device and the default serial
+  # console does not start X. Cua works against an isolated virtual display.
   if ! ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 xset q >/dev/null 2>&1"; then
+    echo "PROBE: starting guest Xvfb display for genuine Cua Driver"
     ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-      "nohup startx >/tmp/soil-startx.log 2>&1 </dev/null &" || true
+      "nohup Xvfb :0 -screen 0 1360x768x24 -nolisten tcp >/tmp/soil-xvfb.log 2>&1 </dev/null &" || true
     gui_ready=0
-    for attempt in $(seq 1 30); do
+    for attempt in $(seq 1 15); do
       if ssh "${ssh_opts[@]}" tc@127.0.0.1 \
         "DISPLAY=:0 xset q >/dev/null 2>&1"; then gui_ready=1; break; fi
       sleep 1
     done
     if [[ "$gui_ready" != 1 ]]; then
-      echo "PROBE: startx not available via SSH; testing shipped framebuffer X server"
       ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-        "sudo -n sh -c 'nohup Xfbdev :0 -screen 1360x768x24 -fb /dev/fb0 >/tmp/soil-xfbdev.log 2>&1 </dev/null &' " || true
-      for attempt in $(seq 1 12); do
-        if ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-          "DISPLAY=:0 xset q >/dev/null 2>&1"; then gui_ready=1; break; fi
-        sleep 1
-      done
-    fi
-    if [[ "$gui_ready" != 1 ]]; then
-      echo "PROBE: the guest framebuffer device is unavailable; test Xvfb offscreen X11"
-      ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-        "nohup Xvfb :0 -screen 0 1360x768x24 -nolisten tcp >/tmp/soil-xvfb.log 2>&1 </dev/null &" || true
-      for attempt in $(seq 1 12); do
-        if ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-          "DISPLAY=:0 xset q >/dev/null 2>&1"; then gui_ready=1; break; fi
-        sleep 1
-      done
-      if [[ "$gui_ready" == 1 ]]; then
-        ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-          "DISPLAY=:0 nohup fluxbox >/tmp/soil-fluxbox.log 2>&1 </dev/null &" || true
-        ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-          "DISPLAY=:0 nohup pcmanfm --desktop >/tmp/soil-pcmanfm.log 2>&1 </dev/null &" || true
-      fi
-    fi
-    if [[ "$gui_ready" != 1 ]]; then
-      ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-        "tail -n 100 /tmp/soil-startx.log /tmp/soil-xfbdev.log; \
-         ls -la /tmp/.X11-unix; ps w | grep -E 'Xorg|Xfbdev|fluxbox' || true" || true
-      echo "Guest X11 did not start; CUA capture is unavailable" >&2
+        "tail -n 100 /tmp/soil-xvfb.log; ls -l /tmp/.X11-unix; ps w | grep Xvfb || true" || true
+      echo "Virtual X11 display failed to start inside guest" >&2
       exit 1
     fi
+    ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+      "DISPLAY=:0 nohup fluxbox >/tmp/soil-fluxbox.log 2>&1 </dev/null &" || true
+    ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+      "DISPLAY=:0 nohup pcmanfm --desktop >/tmp/soil-pcmanfm.log 2>&1 </dev/null &" || true
   fi
   echo "PROBE: X11 server is reachable on DISPLAY=:0"
   # Start Cua only after X is usable. The daemon initializes its capture
