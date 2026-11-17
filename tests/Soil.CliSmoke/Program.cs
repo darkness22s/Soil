@@ -274,8 +274,8 @@ internal static class Program
         try
         {
             Console.SetIn(new StringReader(
-                "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}\\n" +
-                "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}\\n"));
+                "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}\n" +
+                "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}\n"));
             Console.SetOut(output);
             var code = (int)CliRun.Invoke(null, new object[] {
                 new[] { "vm", "computer", "mcp" }, new SoilPaths(endpoint)
