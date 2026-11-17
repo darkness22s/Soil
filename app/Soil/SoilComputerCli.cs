@@ -34,8 +34,16 @@ internal static class SoilComputerCli
             Console.WriteLine(JsonSerializer.Serialize(result, Pretty));
             return 0;
         }
+        if (args.Length is 5 or 6 && args[2] == "cua")
+        {
+            using var doc = JsonDocument.Parse(args.Length == 6 ? args[5] : "{}");
+            var result = CuaCall(client, paths, args[3], args[4], doc.RootElement);
+            Console.WriteLine(result.GetProperty("output").GetString());
+            return 0;
+        }
         Console.Error.WriteLine("Usage: Soil.exe vm computer screenshot <vm-id> [file.jpg]");
         Console.Error.WriteLine("       Soil.exe vm computer action <vm-id> '{\"action\":\"key\",\"key\":\"enter\"}'");
+        Console.Error.WriteLine("       Soil.exe vm computer cua <vm-id> <tool> [json]");
         Console.Error.WriteLine("       Soil.exe vm computer mcp   (stdio MCP server)");
         return 2;
     }
@@ -71,6 +79,21 @@ internal static class SoilComputerCli
     private static JsonElement Action(HttpClient client, SoilPaths paths, string vmId, JsonElement body)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, Endpoint(vmId, "action"));
+        Authorize(request, paths);
+        request.Content = new StringContent(body.GetRawText(), Encoding.UTF8, "application/json");
+        using var response = client.Send(request);
+        EnsureSuccess(response);
+        using var doc = JsonDocument.Parse(response.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement CuaCall(
+        HttpClient client, SoilPaths paths, string vmId, string tool, JsonElement body)
+    {
+        if (tool.Length > 40 || !tool.All(ch => char.IsAsciiLetterOrDigit(ch) || ch == '_'))
+            throw new ArgumentException("Invalid upstream Cua Driver tool name.");
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post, Endpoint(vmId, "cua/" + Uri.EscapeDataString(tool)));
         Authorize(request, paths);
         request.Content = new StringContent(body.GetRawText(), Encoding.UTF8, "application/json");
         using var response = client.Send(request);
@@ -160,6 +183,24 @@ internal static class SoilComputerCli
             }
         },
         new {
+            name = "soil_vm_cua_call",
+            description = "Run an actual pinned upstream open-source Cua Driver tool INSIDE the selected VM. " +
+                "Use when its X11 desktop is ready. Supports get_desktop_state, get_window_state, " +
+                "list_apps, click, double_click, move_cursor, scroll, type_text, press_key, get_cursor_position. " +
+                "The guest driver is preloaded in Soil's bundled guest image; errors mean it cannot " +
+                "reach the desktop, and should not be interpreted as success.",
+            inputSchema = new {
+                type = "object",
+                properties = new {
+                    vm_id = new { type = "string" },
+                    tool = new { type = "string" },
+                    arguments = new { type = "object" }
+                },
+                required = new[] { "vm_id", "tool" },
+                additionalProperties = false
+            }
+        },
+        new {
             name = "soil_vm_action",
             description = "Send mouse/keyboard input into the chosen running Soil VM. " +
                 "Actions: move, click, double_click (x,y), key (key name/ctrl+a), type (ASCII text). " +
@@ -209,6 +250,16 @@ internal static class SoilComputerCli
                         type = "image", mimeType = "image/jpeg",
                         data = Convert.ToBase64String(Capture(client, paths, vmId))
                     });
+                    break;
+                }
+                case "soil_vm_cua_call":
+                {
+                    var vmId = args.GetProperty("vm_id").GetString()!;
+                    var tool = args.GetProperty("tool").GetString()!;
+                    var body = args.TryGetProperty("arguments", out var provided)
+                        ? provided.Clone() : JsonSerializer.SerializeToElement(new { });
+                    var result = CuaCall(client, paths, vmId, tool, body);
+                    content.Add(new { type = "text", text = result.GetProperty("output").GetString() });
                     break;
                 }
                 case "soil_vm_action":
