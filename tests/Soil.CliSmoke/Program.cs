@@ -37,6 +37,7 @@ internal static class Program
             await TestInstallAsync(noLaunch: false, launchFails: true);
             await TestComputerApiAsync();
             TestMcpToolCatalog();
+            TestNativeCuaImageForwarding();
             Console.WriteLine("PASS: production Soil CLI imports, launches, and recovers from launch failure");
             return 0;
         }
@@ -261,6 +262,26 @@ internal static class Program
         }
     }
 
+    private static void TestNativeCuaImageForwarding()
+    {
+        var blocks = new List<object>();
+        var output = JsonSerializer.Serialize(new {
+            content = new object[] {
+                new { type = "text", text = "Cua desktop screenshot" },
+                new { type = "image", mimeType = "image/png", data = "iVBORw0KGgo=" }
+            }
+        });
+        SoilComputerCli.AddCuaContent(blocks, output);
+        var json = JsonSerializer.Serialize(blocks);
+        Check(blocks.Count == 2 && json.Contains("\\"type\\":\\"image\\"") &&
+              json.Contains("\\"mimeType\\":\\"image/png\\""),
+              "The Cua MCP bridge must return native screenshot image blocks.");
+        var plain = new List<object>();
+        SoilComputerCli.AddCuaContent(plain, "Cua Driver list-tools");
+        Check(JsonSerializer.Serialize(plain).Contains("list-tools"),
+              "Driver metadata must be forwarded as readable text.");
+    }
+
     private static void TestMcpToolCatalog()
     {
         var temp = Path.Combine(Path.GetTempPath(), "soil-mcp-smoke-" +
@@ -283,7 +304,8 @@ internal static class Program
             Check(code == 0, "MCP bridge returned a nonzero exit code.");
             var text = output.ToString();
             Check(text.Contains("soil_vm_screenshot") && text.Contains("soil_vm_action") &&
-                  text.Contains("soil_list_vms"), "MCP did not expose its computer tools.");
+                  text.Contains("soil_list_vms") && text.Contains("soil_vm_cua_catalog") &&
+                  text.Contains("soil_vm_cua_call"), "MCP did not expose its computer tools.");
             Check(text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length == 2,
                 "MCP must return one JSON-RPC message per request.");
         }
