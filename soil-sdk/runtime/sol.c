@@ -23,6 +23,7 @@ const char *sol_kind_name(int kind)
     case 1: return "webapp";
     case 2: return "installer";
     case 3: return "webapp+native";
+    case 4: return "native";
     default: return "unknown";
     }
 }
@@ -33,6 +34,7 @@ int sol_kind_from_name(const char *name)
     if (!strcmp(name, "webapp")) return 1;
     if (!strcmp(name, "installer")) return 2;
     if (!strcmp(name, "webapp+native")) return 3;
+    if (!strcmp(name, "native")) return 4;
     return 0;
 }
 
@@ -84,7 +86,7 @@ int sol_read_header(const char *path, sol_header *h, char *err, size_t errlen)
         snprintf(err, errlen, "unsupported format version %u", h->version);
         return -1;
     }
-    if (h->kind < 1 || h->kind > 3) {
+    if (h->kind < 1 || h->kind > 4) {
         snprintf(err, errlen, "unknown package kind %u", h->kind);
         return -1;
     }
