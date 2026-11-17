@@ -9,7 +9,7 @@ description: Install/import real Linux AppImage or ELF apps into Soil desktop VM
 
 ## Windows: built-in per-VM computer-use tools (MCP + CLI)
 
-**Use these to operate the actual Soil VM desktop after import/launch.** The tools are built into Soil and ready for every desktop VM; there is no second guest download, no manual SSH, and no long-running agent process in a stopped VM. They use the host-side framebuffer and PS/2 transport. This is **not the upstream trycua Cua Driver binary running in Tiny Core** (the upstream Linux driver requires a compatible glibc/X11/AT-SPI desktop, which Soil's compact guest does not provide). Do not misrepresent the bridge as native Cua accessibility-tree or background-window automation.
+**Use these to operate the actual Soil VM desktop after import/launch.** The tools are built into Soil and ready for every desktop VM; there is no second guest download, no manual SSH, and no long-running agent process in a stopped VM. They use the host-side framebuffer and PS/2 transport. This is **not the upstream trycua Cua Driver binary running in Tiny Core** (the upstream Linux driver needs glibc, X11/XWayland and AT-SPI; Tiny Core uses glibc, but compatibility of Soil's bundled desktop with this driver is not yet verified). Do not misrepresent the bridge as native Cua accessibility-tree or background-window automation.
 
 For a local agent supporting **MCP**, register the installed Soil executable as a stdio server. In Codex, run:
 
