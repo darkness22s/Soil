@@ -34,13 +34,13 @@ FMT_VERSION = 1
 HDR_SIZE = 128
 DIGEST_OFF = 32
 SIG_OFF = 64
-KIND_BY_NAME = {"webapp": 1, "installer": 2, "webapp+native": 3}
+KIND_BY_NAME = {"webapp": 1, "installer": 2, "webapp+native": 3, "native": 4}
 NAME_BY_KIND = {v: k for k, v in KIND_BY_NAME.items()}
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,63}$")
 VER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 PERMS = {"clipboard", "dialogs", "notifications", "openExternal", "exec"}
 SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "dist", "__pycache__"}
-MAX_FILE = 64 * 1024 * 1024
+MAX_FILE = 256 * 1024 * 1024
 MAX_TOTAL = 512 * 1024 * 1024
 
 
@@ -103,7 +103,7 @@ def validate_manifest(m, app_dir):
     elif not os.path.isfile(os.path.join(app_dir, icon)):
         errs.append("icon not found: %s" % icon)
     entry = m.get("entry")
-    if kind in ("webapp", "webapp+native"):
+    if kind in ("webapp", "webapp+native", "native"):
         if not isinstance(entry, str) or not safe_rel(entry):
             errs.append("entry must be a relative path")
         elif not os.path.isfile(os.path.join(app_dir, entry)):
@@ -119,6 +119,27 @@ def validate_manifest(m, app_dir):
                 errs.append("exec path not found: %s" % e)
     if kind == "webapp+native" and not execs:
         errs.append("webapp+native requires at least one exec entry")
+    if kind == "native":
+        native_entry = m.get("entry")
+        if isinstance(native_entry, str) and safe_rel(native_entry):
+            native_file = os.path.join(app_dir, native_entry)
+            if os.path.isfile(native_file):
+                with open(native_file, "rb") as f:
+                    header = f.read(64)
+                elf = (len(header) >= 20 and header[:4] == b"\x7fELF" and
+                       header[4:6] == b"\x02\x01" and header[18:20] == b"\x3e\x00" and
+                       header[16:18] in (b"\x02\x00", b"\x03\x00"))
+                script = header.startswith(b"#!")
+                if not (elf or script):
+                    errs.append("native entry must be an x86_64 Linux ELF, Type 2 AppImage or shebang script")
+                if not os.stat(native_file).st_mode & 0o111:
+                    errs.append("native entry must be executable (chmod +x)")
+        if "terminal" in m and not isinstance(m["terminal"], bool):
+            errs.append("terminal must be a boolean")
+        if "args" in m and (not isinstance(m["args"], list) or
+                            any(not isinstance(a, str) for a in m["args"]) or
+                            len(m["args"]) > 32):
+            errs.append("args must be an array of at most 32 strings")
     if kind == "installer":
         inst = m.get("install")
         if not isinstance(inst, dict) or not isinstance(inst.get("command"), str):
