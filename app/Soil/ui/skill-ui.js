@@ -15,6 +15,7 @@
   var labels = {
     installed: "Installed",
     already_installed: "Already installed",
+    updated: "Updated (backup saved)",
     conflict: "Existing skill left unchanged",
     not_detected: "Not detected",
     error: "Installation failed"
