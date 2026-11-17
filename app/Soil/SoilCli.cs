@@ -56,6 +56,13 @@ internal static class SoilCli
             };
             return RunCommand(client, args);
         }
+        catch (OperationCanceledException)
+        {
+            Console.Error.WriteLine("Soil did not respond before the request deadline. " +
+                "Run 'Soil.exe vm app list --vm <vm-id>' to check whether the app was " +
+                "already imported before retrying.");
+            return 1;
+        }
         catch (Exception ex) when (ex is IOException or JsonException or HttpRequestException or
                                    InvalidOperationException or UriFormatException)
         {
@@ -237,16 +244,29 @@ internal static class SoilCli
         var appName = result.RootElement.GetProperty("name").GetString()!;
         if (!noLaunch)
         {
-            using var launched = client.PostAsync(
-                basePath + "/" + Uri.EscapeDataString(appId) + "/launch", null)
-                .GetAwaiter().GetResult();
-            if (!launched.IsSuccessStatusCode)
+            try
+            {
+                using var launched = client.PostAsync(
+                    basePath + "/" + Uri.EscapeDataString(appId) + "/launch", null)
+                    .GetAwaiter().GetResult();
+                if (!launched.IsSuccessStatusCode)
+                {
+                    Console.Error.WriteLine("Imported " + appName + " (app ID " + appId +
+                        "), but Linux could not launch it. The app remains saved.");
+                    Console.Error.WriteLine("Retry: Soil.exe vm app launch " + appId +
+                        " --vm " + vmId);
+                    return PrintApiError(launched);
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
             {
                 Console.Error.WriteLine("Imported " + appName + " (app ID " + appId +
-                    "), but it could not launch. It remains saved in the VM.");
-                Console.Error.WriteLine("Retry: Soil.exe vm app launch " + appId +
-                    " --vm " + vmId);
-                return PrintApiError(launched);
+                    "), but Soil could not confirm the launch: " + ex.Message);
+                Console.Error.WriteLine("Check the VM before retrying: Soil.exe vm app list --vm " +
+                    vmId);
+                Console.Error.WriteLine("If it is not running, retry: Soil.exe vm app launch " +
+                    appId + " --vm " + vmId);
+                return 1;
             }
         }
         Console.WriteLine(JsonSerializer.Serialize(new
