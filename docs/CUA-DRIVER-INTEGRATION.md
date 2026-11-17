@@ -36,7 +36,11 @@ the native Cua interface is unavailable. The app launch path now waits
 for `DISPLAY=:0 xset q` instead of accepting SSH as GUI readiness and
 returns a specific error on failure. The dedicated Cua CI probe is
 non-blocking and intentionally checks actual `get_desktop_state`,
-not just `--version`.
+not just `--version`. Both framebuffer Xfbdev (no usable `/dev/fb0`)
+and virtual Xvfb (segmentation fault in the shipped guest) failed in
+the tested image. Do **not** turn on the crashing virtual-display
+fallback in production or claim working graphical computer use from
+this result.
 
 Cua Driver requires a working X11/XWayland session; AT-SPI window
 accessibility additionally requires an AT-SPI D-Bus bus. Tiny Core itself
