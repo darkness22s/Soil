@@ -87,24 +87,24 @@ class ImageInjectionTests(unittest.TestCase):
             )
             source.write_bytes(gzip.compress(archive))
             elf = bytearray(100_000)
-            elf[:6] = b"\\x7fELF\\x02\\x01"
-            elf[18:20] = b"\\x3e\\x00"
+            elf[:6] = b"\x7fELF\x02\x01"
+            elf[18:20] = b"\x3e\x00"
             elf[32:40] = (64).to_bytes(8, "little")
             elf[54:56] = (56).to_bytes(2, "little")
             elf[56:58] = (1).to_bytes(2, "little")
             elf[64:68] = (1).to_bytes(4, "little")
             driver.write_bytes(elf)
-            license_file.write_text("MIT License\\nCopyright Cua AI", encoding="utf-8")
+            license_file.write_text("MIT License\nCopyright Cua AI", encoding="utf-8")
             injector.inject(source, target, LAUNCHER, cua=driver,
                             cua_license=license_file)
             injector.verify(target, LAUNCHER, cua=driver, cua_license=license_file)
             data = gzip.decompress(target.read_bytes())
-            self.assertIn(injector.CUA_DRIVER_PATH.encode() + b"\\0", data)
-            self.assertIn(injector.CUA_LICENSE_PATH.encode() + b"\\0", data)
+            self.assertIn(injector.CUA_DRIVER_PATH.encode() + b"\0", data)
+            self.assertIn(injector.CUA_LICENSE_PATH.encode() + b"\0", data)
             with self.assertRaisesRegex(ValueError, "already contains"):
                 injector.inject(target, target, LAUNCHER, cua=driver,
                                 cua_license=license_file)
-            elf[18:20] = b"\\xb7\\x00"
+            elf[18:20] = b"\xb7\x00"
             with self.assertRaisesRegex(ValueError, "x86_64"):
                 injector.validate_cua_driver(elf)
 
