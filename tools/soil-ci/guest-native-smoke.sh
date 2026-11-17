@@ -176,6 +176,14 @@ if [[ -n "${SOIL_CUA_DRIVER_ARCHIVE:-}" ]]; then
   # Guest images must not send telemetry. Disable before starting the daemon.
   ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 /tmp/cua-driver telemetry disable"
   ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 /tmp/cua-driver doctor"
+  echo "PROBE: kernel framebuffer, X modules, and available alternative servers"
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+    "cat /proc/fb 2>&1 || true; cat /proc/cmdline; ls -la /sys/class/graphics /dev/fb* 2>&1 || true; \
+     cat /proc/modules | grep -E 'fb|drm|video' || true; \
+     find /usr/local/lib/xorg/modules -type f -name '*drv.so' 2>/dev/null || true; \
+     for bin in Xvnc Xtigervnc Xorg Xfbdev Xvfb Xephyr Xwayland modprobe; do \
+       command -v \$bin || true; done; \
+     ls /lib/modules/\$(uname -r)/kernel/drivers/video/fbdev 2>&1 || true" || true
   echo "PROBE: actual guest desktop/server diagnostics"
   ssh "${ssh_opts[@]}" tc@127.0.0.1 \
     "ps w; ls -la /tmp/.X11-unix /tmp/.X0-lock /dev/fb0 2>&1 || true; \
