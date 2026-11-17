@@ -19,8 +19,8 @@ from pathlib import Path
 MAGIC = (b"070701", b"070702")
 GUEST_PATH = "bin/soil-native"
 SOL_GUEST_PATH = "bin/soil"
-CUA_DRIVER_PATH = "usr/local/bin/cua-driver"
-CUA_LICENSE_PATH = "usr/local/share/doc/cua-driver/LICENSE.md"
+CUA_DRIVER_PATH = "bin/cua-driver"
+CUA_LICENSE_PATH = "usr/share/doc/cua-driver/LICENSE.md"
 
 
 def align4(data: bytes) -> bytes:
