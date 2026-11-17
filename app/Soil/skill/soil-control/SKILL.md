@@ -9,7 +9,7 @@ description: Install/import real Linux AppImage or ELF apps into Soil desktop VM
 
 ## Windows: built-in per-VM computer-use tools (MCP + CLI)
 
-**Use these to operate the actual Soil VM desktop after import/launch.** The tools are built into Soil and ready for every desktop VM; there is no second guest download, no manual SSH, and no long-running agent process in a stopped VM. They use the host-side framebuffer and PS/2 transport. This is **not the upstream trycua Cua Driver binary running in Tiny Core** (the upstream Linux driver needs glibc, X11/XWayland and AT-SPI; Tiny Core uses glibc, but compatibility of Soil's bundled desktop with this driver is not yet verified). Do not misrepresent the bridge as native Cua accessibility-tree or background-window automation.
+**Use these to operate the actual Soil VM desktop after import/launch.** The tools are built into Soil and ready for every desktop VM; there is no second guest download, no manual SSH, and no long-running agent process in a stopped VM. The default fast screenshot/action tools use the host-side framebuffer and PS/2 transport. **The authentic upstream trycua Cua Driver v0.49.5 binary is now preloaded into the Windows installer guest image**, with its MIT license and checksum verified at build. The additional `soil_vm_cua_call` MCP tool or `vm computer cua` command starts the guest Cua daemon on demand with telemetry disabled. It requires a usable X11 desktop; if guest X11 is unavailable it reports an error and is **not** a working accessibility interface. Do not misrepresent a host fallback as successful native Cua execution.
 
 For a local agent supporting **MCP**, register the installed Soil executable as a stdio server. In Codex, run:
 
@@ -18,7 +18,7 @@ $soil = (Get-Process -Name Soil | Select-Object -First 1 -ExpandProperty Path)
 codex mcp add soil-vm-computer -- "$soil" vm computer mcp
 ```
 
-For other MCP-capable agents, register command `<absolute-path-to-Soil.exe>`, arguments `vm computer mcp`, transport `stdio`. Restart or reconnect the agent if it caches MCP servers. The server exposes `soil_list_vms`, `soil_vm_screenshot`, and `soil_vm_action`. The screenshot is returned as an **image in the tool result**, not an invented text description. An action result `{"ok":true}` means input was delivered, **not** that the GUI did what was intended.
+For other MCP-capable agents, register command `<absolute-path-to-Soil.exe>`, arguments `vm computer mcp`, transport `stdio`. Restart or reconnect the agent if it caches MCP servers. The server exposes `soil_list_vms`, `soil_vm_screenshot`, `soil_vm_action`, and `soil_vm_cua_call` (genuine guest driver). The screenshot is returned as an **image in the tool result**, not an invented text description. An action result `{"ok":true}` means input was delivered, **not** that the GUI did what was intended.
 
 Shell-based agents can use the same VM surfaces without MCP:
 
@@ -28,7 +28,11 @@ Shell-based agents can use the same VM surfaces without MCP:
 & $soil vm computer action '<vm-id>' '{"action":"click","x":450,"y":300}'
 & $soil vm computer action '<vm-id>' '{"action":"type","text":"hello world"}'
 & $soil vm computer action '<vm-id>' '{"action":"key","key":"ctrl+a"}'
+# Genuine upstream Cua Driver (only after X11 is ready):
+& $soil vm computer cua '<vm-id>' get_desktop_state '{}'
 ```
+
+**Prefer `soil_vm_cua_call` for upstream driver actions** when it can successfully observe the guest X11 desktop (for example tool `get_desktop_state`, `list_apps`, `click`, or `type_text` with that tool\'s documented JSON schema). The host-only `soil_vm_action` remains the fallback where X11 is missing. `Soil.exe vm computer cua <vm-id> <tool> [json]` offers the same upstream bridge for shell agents. Never silently treat an upstream driver error as a completed action.
 
 **Computer-use workflow:** (1) list VMs; (2) use the user-selected VM ID; (3) confirm status `running` (ask before starting stopped VMs unless launch was explicitly requested); (4) screenshot and inspect the current GUI; (5) send one action; (6) screenshot again and confirm the intended change. Repeat only while evidence improves. The fixed 1360×768 screenshot coordinates are relative to the original image. `click`, `double_click`, `move` take `x,y`; `key` takes a key name or modifier shortcut (e.g. `ctrl+a`); `type` supports plain ASCII keyboard characters up to 4096. Scroll, drag, accessibility element trees, background window targeting, and arbitrary Unicode typing are **not available in this bridge**. PS/2 pointer movement is relative and may be affected by guest acceleration; inspect a fresh screenshot after every click. Never infer that an app launched only because an install returned success.
 
