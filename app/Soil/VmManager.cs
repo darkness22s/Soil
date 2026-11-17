@@ -441,7 +441,15 @@ public sealed class VmManager
                 // real desktop before launching Linux GUI applications.
                 if (await RunGuestCommandAsync(
                         ssh.Port, ssh.Key, "DISPLAY=:0 xset q >/dev/null 2>&1", 5, ct))
+                {
+                    if (fallbackAttempted)
+                        // Bring up the shipped window manager on the virtual
+                        // display; it is observable through native Cua Driver.
+                        await RunGuestCommandAsync(ssh.Port, ssh.Key,
+                            "(DISPLAY=:0 nohup fluxbox >/tmp/soil-fluxbox.log 2>&1 " +
+                            "</dev/null &)", 5, ct);
                     return;
+                }
 
                 if (await RunGuestCommandAsync(ssh.Port, ssh.Key, "true", 5, ct))
                 {
