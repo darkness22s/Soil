@@ -17,9 +17,9 @@ if [ ! -f /opt/soil/xorg/drivers/dummy_drv.so ] ||
     exit 1
 fi
 
-mkdir -p /run/soil
-if mkdir /run/soil/desktop-starting 2>/dev/null; then
-    trap 'rmdir /run/soil/desktop-starting 2>/dev/null || true' EXIT HUP INT TERM
+mkdir -p /tmp/soil
+if mkdir /tmp/soil/desktop-starting 2>/dev/null; then
+    trap 'rmdir /tmp/soil/desktop-starting 2>/dev/null || true' EXIT HUP INT TERM
     if ! xset q >/dev/null 2>&1; then
         # Launch the shipped Xorg server with no TCP listener. All desktop apps
         # and the official Cua Driver share this exact X11 session.
