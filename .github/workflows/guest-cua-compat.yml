@@ -40,6 +40,9 @@ jobs:
           driver="$(find "$RUNNER_TEMP/soil-dummy" -name dummy_drv.so -type f -print -quit)"
           test -n "$driver"
           echo "SOIL_CUA_DUMMY_MODULE=$driver" >> "$GITHUB_ENV"
+          notice="$(find "$RUNNER_TEMP/soil-dummy" -path '*/xserver-xorg-video-dummy/copyright' -type f -print -quit)"
+          test -n "$notice"
+          echo "SOIL_CUA_DUMMY_LICENSE=$notice" >> "$GITHUB_ENV"
           file "$driver"
       - name: Fetch pinned, verified upstream MIT Cua Driver release
         shell: bash
@@ -54,4 +57,5 @@ jobs:
         env:
           SOIL_CUA_DRIVER_ARCHIVE: ${{ runner.temp }}/cua-driver.tar.gz
           SOIL_CUA_DUMMY_MODULE: ${{ env.SOIL_CUA_DUMMY_MODULE }}
+          SOIL_CUA_DUMMY_LICENSE: ${{ env.SOIL_CUA_DUMMY_LICENSE }}
         run: bash tools/soil-ci/guest-native-smoke.sh app/images
