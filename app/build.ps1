@@ -3,6 +3,7 @@ param(
     [string]$ImagesDir = "",
     [string]$Gcc = "",
     [string]$GuestSoilExecutable = "",
+    [string]$GuestCuaDriver = "",
     [switch]$SkipEngine,
     [switch]$SkipMsi
 )
@@ -82,13 +83,27 @@ if ([string]::IsNullOrWhiteSpace($GuestSoilExecutable)) {
 if (-not (Test-Path -LiteralPath $GuestSoilExecutable)) {
     throw "Missing static Linux Soil SDK CLI at $GuestSoilExecutable. Build it on Linux with tools/soil-ci/build-guest-cli.sh or download the guest CLI artifact from the CI workflow."
 }
-& $python.Source $injectGuest (Join-Path $imagesDir "core2.gz") (Join-Path $imagesDir "core2.gz") --runtime $GuestSoilExecutable
-if ($LASTEXITCODE -ne 0) {
-    throw "Could not embed native Linux .sol runtime into the bundled guest image."
+# The official Cua Driver is pinned and fetched by CI once, not by users.
+# Local developer builds may omit it explicitly; release CI must always provide
+# -GuestCuaDriver and verify the completed VM image contains the real binary.
+$cuaArgs = @()
+if (-not [string]::IsNullOrWhiteSpace($GuestCuaDriver)) {
+    if (-not (Test-Path -LiteralPath $GuestCuaDriver)) {
+        throw "Missing verified upstream Cua Driver binary at $GuestCuaDriver"
+    }
+    $license = Join-Path $root "app/Soil/third-party/cua-driver-LICENSE.md"
+    if (-not (Test-Path -LiteralPath $license)) {
+        throw "The Cua Driver MIT license is required in the bundled guest."
+    }
+    $cuaArgs = @("--cua-driver", $GuestCuaDriver, "--cua-license", $license)
 }
-& $python.Source $injectGuest (Join-Path $imagesDir "core2.gz") (Join-Path $imagesDir "core2.gz") --runtime $GuestSoilExecutable --verify
+& $python.Source $injectGuest (Join-Path $imagesDir "core2.gz") (Join-Path $imagesDir "core2.gz") --runtime $GuestSoilExecutable @cuaArgs
 if ($LASTEXITCODE -ne 0) {
-    throw "Bundled guest .sol runtime verification failed."
+    throw "Could not embed native Linux runtimes into the bundled guest image."
+}
+& $python.Source $injectGuest (Join-Path $imagesDir "core2.gz") (Join-Path $imagesDir "core2.gz") --runtime $GuestSoilExecutable @cuaArgs --verify
+if ($LASTEXITCODE -ne 0) {
+    throw "Bundled guest Linux runtime verification failed."
 }
 
 $readme = @"
