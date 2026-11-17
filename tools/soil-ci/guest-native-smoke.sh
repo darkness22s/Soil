@@ -107,8 +107,7 @@ fi
 cat "$tmp/native-app" | ssh "${ssh_opts[@]}" tc@127.0.0.1 "cat > /tmp/soil-ci-native"
 ssh "${ssh_opts[@]}" tc@127.0.0.1 "soil-native install nativeapp /tmp/soil-ci-native 'CI Native Linux App'"
 ssh "${ssh_opts[@]}" tc@127.0.0.1 "soil-native launch nativeapp && sleep 1 && test -f /tmp/soil-native-guest-executed"
-ssh "${ssh_opts[@]}" tc@127.0.0.1 "soil-native list | grep '^nativeapp
- && soil-native remove nativeapp"
+ssh "${ssh_opts[@]}" tc@127.0.0.1 "soil-native list | grep '^nativeapp$' && soil-native remove nativeapp"
 
 # Transfer a genuinely packaged native .sol (header, manifest, SquashFS, digest).
 # It must mount and execute in the actual guest kernel, not on the CI host.
@@ -117,8 +116,7 @@ ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/soil info /tmp/NativeSmoke.sol | grep na
 ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/soil verify /tmp/NativeSmoke.sol"
 ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/soil run /tmp/NativeSmoke.sol && test -f /tmp/soil-sol-guest-executed"
 ssh "${ssh_opts[@]}" tc@127.0.0.1 "rm /tmp/soil-sol-guest-executed && /bin/soil install /tmp/NativeSmoke.sol"
-ssh "${ssh_opts[@]}" tc@127.0.0.1 "grep '^Exec=/bin/soil launch org.soil.smoke
- ~/.local/share/applications/soil-org.soil.smoke.desktop"
+ssh "${ssh_opts[@]}" tc@127.0.0.1 "grep '^Exec=/bin/soil launch org.soil.smoke$' ~/.local/share/applications/soil-org.soil.smoke.desktop"
 ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/soil launch org.soil.smoke && test -f /tmp/soil-sol-guest-executed"
 ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/soil list | grep org.soil.smoke && /bin/soil remove org.soil.smoke"
 ssh "${ssh_opts[@]}" tc@127.0.0.1 "! /bin/soil list | grep -q org.soil.smoke"
