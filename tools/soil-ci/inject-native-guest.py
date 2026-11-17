@@ -100,13 +100,13 @@ def create_overlay(script: bytes, runtime: bytes | None = None,
         overlay += newc_entry(CUA_LICENSE_PATH, cua_license, stat.S_IFREG | 0o644, 91005)
     if dummy_module is not None:
         if (len(dummy_module) < 1024 or len(dummy_module) > 1024 * 1024 or
-                dummy_module[:6] != b"\\x7fELF\\x02\\x01" or
-                dummy_module[18:20] != b"\\x3e\\x00"):
+                dummy_module[:6] != b"\x7fELF\x02\x01" or
+                dummy_module[18:20] != b"\x3e\x00"):
             raise ValueError("Xorg dummy module must be Linux x86_64 ELF.")
         if (not dummy_license or len(dummy_license) < 50 or
                 not dummy_config or b'Driver "dummy"' not in dummy_config or
                 b"1360x768" not in dummy_config or
-                not desktop_script or not desktop_script.startswith(b"#!/bin/sh\\n")):
+                not desktop_script or not desktop_script.startswith(b"#!/bin/sh\n")):
             raise ValueError("Xorg module requires its license, 1360x768 config and guest startup script.")
         overlay += newc_entry(XORG_DUMMY_PATH, dummy_module, stat.S_IFREG | 0o644, 91006)
         overlay += newc_entry(XORG_LICENSE_PATH, dummy_license, stat.S_IFREG | 0o644, 91007)
@@ -162,9 +162,9 @@ def inject(source: Path, destination: Path, launcher: Path, runtime: Path | None
         raise ValueError("The initramfs already contains soil-native; supply unmodified image sources.")
     if runtime is not None and SOL_GUEST_PATH.encode() + b"\0" in contents:
         raise ValueError("The initramfs already contains the Soil SDK runtime.")
-    if cua is not None and CUA_DRIVER_PATH.encode() + b"\\0" in contents:
+    if cua is not None and CUA_DRIVER_PATH.encode() + b"\0" in contents:
         raise ValueError("The initramfs already contains Cua Driver.")
-    if dummy is not None and XORG_DUMMY_PATH.encode() + b"\\0" in contents:
+    if dummy is not None and XORG_DUMMY_PATH.encode() + b"\0" in contents:
         raise ValueError("The initramfs already contains a Soil Xorg dummy module.")
     check_archive(contents)
     binary = runtime.read_bytes() if runtime is not None else None
@@ -220,7 +220,7 @@ def verify(image: Path, launcher: Path, runtime: Path | None = None,
             (XORG_CONFIG_PATH, dummy_config),
             (XORG_ENSURE_PATH, desktop_ensure),
         ):
-            if file is None or path.encode() + b"\\0" not in payload or file.read_bytes() not in payload:
+            if file is None or path.encode() + b"\0" not in payload or file.read_bytes() not in payload:
                 raise ValueError(f"Bundled Xorg virtual desktop file is missing: {path}")
     if len(payload) <= 65536:
         raise ValueError("The bundled guest image is unexpectedly small.")
