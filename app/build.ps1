@@ -2,6 +2,7 @@ param(
     [string]$Configuration = "Release",
     [string]$ImagesDir = "",
     [string]$Gcc = "",
+    [string]$GuestSoilExecutable = "",
     [switch]$SkipEngine,
     [switch]$SkipMsi
 )
@@ -75,9 +76,19 @@ $python = Get-Command python -ErrorAction SilentlyContinue
 if (-not $python) {
     throw "Python 3 is required to prepare core2.gz with native Linux app support."
 }
-& $python.Source $injectGuest (Join-Path $imagesDir "core2.gz") (Join-Path $imagesDir "core2.gz")
+if ([string]::IsNullOrWhiteSpace($GuestSoilExecutable)) {
+    $GuestSoilExecutable = Join-Path $root "tools/soil-ci/out/soil"
+}
+if (-not (Test-Path -LiteralPath $GuestSoilExecutable)) {
+    throw "Missing static Linux Soil SDK CLI at $GuestSoilExecutable. Build it on Linux with tools/soil-ci/build-guest-cli.sh or download the guest CLI artifact from the CI workflow."
+}
+& $python.Source $injectGuest (Join-Path $imagesDir "core2.gz") (Join-Path $imagesDir "core2.gz") --runtime $GuestSoilExecutable
 if ($LASTEXITCODE -ne 0) {
-    throw "Could not embed native Linux app support into the bundled guest image."
+    throw "Could not embed native Linux .sol runtime into the bundled guest image."
+}
+& $python.Source $injectGuest (Join-Path $imagesDir "core2.gz") (Join-Path $imagesDir "core2.gz") --runtime $GuestSoilExecutable --verify
+if ($LASTEXITCODE -ne 0) {
+    throw "Bundled guest .sol runtime verification failed."
 }
 
 $readme = @"
@@ -99,7 +110,7 @@ Use
 - Agent home directories and sign-in state live on each machine data disk and survive restarts.
 - Desktop machines park after 90 seconds without use or when the app stays unfocused. A parked machine writes a checkpoint and fully exits, releasing guest CPU and RAM. It restarts only when requested. Background app/agent workers are not automatically parked on UI focus loss. Data disks persist.
 - Sign-in pages open in the machine's built-in browser.
-- Use Linux apps in a selected desktop VM to import a native x86-64 ELF executable or Type 2 AppImage; it runs inside the guest, not on Windows.
+- Use Linux apps in a selected desktop VM to import a native x86-64 ELF executable or Type 2 AppImage; it runs inside the guest, not on Windows. The guest also includes the native .sol SDK CLI at /bin/soil for packaged applications.
 - Use the branch button to import a GitHub repository into its own app machine.
 - Browse machines, apps, skills, cache, and logs from Files.
 - Machine data lives in %USERPROFILE%\.soil.
