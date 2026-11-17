@@ -40,6 +40,40 @@ class ImageInjectionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "already contains"):
                 injector.inject(destination, destination, LAUNCHER)
 
+    def test_static_sdk_runtime_is_embedded_and_verified(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source, target, executable = (root / v for v in ("src.gz", "dst.gz", "soil"))
+            archive = (
+                injector.newc_entry("etc/example", os.urandom(100_000),
+                                    stat.S_IFREG | 0o644, 1)
+                + injector.newc_entry("TRAILER!!!", b"", 0, 2)
+            )
+            source.write_bytes(gzip.compress(archive))
+            # Minimal valid static ELF64 x86_64 with one PT_LOAD program header.
+            elf = bytearray(120)
+            elf[:6] = b"\\x7fELF\\x02\\x01"
+            elf[16:18] = b"\\x02\\x00"
+            elf[18:20] = b"\\x3e\\x00"
+            elf[32:40] = (64).to_bytes(8, "little")
+            elf[54:56] = (56).to_bytes(2, "little")
+            elf[56:58] = (1).to_bytes(2, "little")
+            elf[64:68] = (1).to_bytes(4, "little")
+            executable.write_bytes(elf)
+            injector.inject(source, target, LAUNCHER, executable)
+            injector.verify(target, LAUNCHER, executable)
+            payload = gzip.decompress(target.read_bytes())
+            self.assertIn(injector.SOL_GUEST_PATH.encode() + b"\\0", payload)
+            self.assertIn(bytes(elf), payload)
+            # Dynamic interpreter and non-x86_64 ELFs must never ship.
+            elf[64:68] = (3).to_bytes(4, "little")
+            with self.assertRaisesRegex(ValueError, "statically linked"):
+                injector.validate_runtime(elf)
+            elf[64:68] = (1).to_bytes(4, "little")
+            elf[18:20] = b"\\xb7\\x00"
+            with self.assertRaisesRegex(ValueError, "x86_64"):
+                injector.validate_runtime(elf)
+
     def test_rejects_invalid_pointer_and_truncated_newc(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
