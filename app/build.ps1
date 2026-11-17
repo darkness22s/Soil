@@ -4,6 +4,8 @@ param(
     [string]$Gcc = "",
     [string]$GuestSoilExecutable = "",
     [string]$GuestCuaDriver = "",
+    [string]$GuestXorgDummyDriver = "",
+    [string]$GuestXorgDummyLicense = "",
     [switch]$SkipEngine,
     [switch]$SkipMsi
 )
@@ -97,11 +99,35 @@ if (-not [string]::IsNullOrWhiteSpace($GuestCuaDriver)) {
     }
     $cuaArgs = @("--cua-driver", $GuestCuaDriver, "--cua-license", $license)
 }
-& $python.Source $injectGuest (Join-Path $imagesDir "core2.gz") (Join-Path $imagesDir "core2.gz") --runtime $GuestSoilExecutable @cuaArgs
+# The Xorg dummy video backend was verified with a real Xorg session and
+# upstream Cua desktop capture inside the bundled Tiny Core guest. Do not
+# produce an agent-enabled installer that contains Cua but no working display.
+$xorgArgs = @()
+if (-not [string]::IsNullOrWhiteSpace($GuestXorgDummyDriver)) {
+    if (-not (Test-Path -LiteralPath $GuestXorgDummyDriver) -or
+        -not (Test-Path -LiteralPath $GuestXorgDummyLicense)) {
+        throw "Xorg dummy video module and license are required together."
+    }
+    $xorgConfig = Join-Path $root "tools/soil-ci/xorg-dummy.conf"
+    $desktopEnsure = Join-Path $root "tools/soil-ci/soil-ensure-desktop.sh"
+    $xorgArgs = @(
+        "--xorg-dummy", $GuestXorgDummyDriver,
+        "--xorg-license", $GuestXorgDummyLicense,
+        "--xorg-config", $xorgConfig,
+        "--desktop-ensure", $desktopEnsure
+    )
+    $noticesDir = Join-Path $out "third-party"
+    New-Item -ItemType Directory -Force -Path $noticesDir | Out-Null
+    Copy-Item -LiteralPath $GuestXorgDummyLicense -Destination (Join-Path $noticesDir "xf86-video-dummy-LICENSE.txt") -Force
+}
+elseif (-not [string]::IsNullOrWhiteSpace($GuestCuaDriver)) {
+    throw "The Cua Driver requires the tested Xorg virtual desktop module in release installers."
+}
+& $python.Source $injectGuest (Join-Path $imagesDir "core2.gz") (Join-Path $imagesDir "core2.gz") --runtime $GuestSoilExecutable @cuaArgs @xorgArgs
 if ($LASTEXITCODE -ne 0) {
     throw "Could not embed native Linux runtimes into the bundled guest image."
 }
-& $python.Source $injectGuest (Join-Path $imagesDir "core2.gz") (Join-Path $imagesDir "core2.gz") --runtime $GuestSoilExecutable @cuaArgs --verify
+& $python.Source $injectGuest (Join-Path $imagesDir "core2.gz") (Join-Path $imagesDir "core2.gz") --runtime $GuestSoilExecutable @cuaArgs @xorgArgs --verify
 if ($LASTEXITCODE -ne 0) {
     throw "Bundled guest Linux runtime verification failed."
 }
