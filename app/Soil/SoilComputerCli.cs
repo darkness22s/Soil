@@ -183,6 +183,22 @@ internal static class SoilComputerCli
             }
         },
         new {
+            name = "soil_vm_cua_catalog",
+            description = "Discover tools and input schemas from the genuine upstream Cua Driver " +
+                "bundled in the selected VM. No X11 desktop is required to read the catalog. " +
+                "Use describe with a tool name to get its exact JSON schema.",
+            inputSchema = new {
+                type = "object",
+                properties = new {
+                    vm_id = new { type = "string" },
+                    name = new { type = "string",
+                        description = "Optional tool to describe, e.g. click, type_text or get_desktop_state" }
+                },
+                required = new[] { "vm_id" },
+                additionalProperties = false
+            }
+        },
+        new {
             name = "soil_vm_cua_call",
             description = "Run an actual pinned upstream open-source Cua Driver tool INSIDE the selected VM. " +
                 "Use when its X11 desktop is ready. Supports get_desktop_state, get_window_state, " +
@@ -223,6 +239,69 @@ internal static class SoilComputerCli
         }
     };
 
+    // The upstream CLI returns structured MCP content. Preserve image blocks as
+    // actual MCP images, not giant base64 JSON strings that vision agents cannot
+    // inspect. Fall back to readable text for driver versions with other shapes.
+    internal static void AddCuaContent(List<object> content, string? output)
+    {
+        if (string.IsNullOrWhiteSpace(output))
+        {
+            content.Add(new { type = "text", text = "Cua Driver produced no output." });
+            return;
+        }
+        try
+        {
+            using var doc = JsonDocument.Parse(output);
+            var root = doc.RootElement;
+            if (root.ValueKind == JsonValueKind.Object &&
+                root.TryGetProperty("content", out var blocks) &&
+                blocks.ValueKind == JsonValueKind.Array)
+            {
+                var added = 0;
+                foreach (var block in blocks.EnumerateArray())
+                {
+                    if (block.ValueKind != JsonValueKind.Object ||
+                        !block.TryGetProperty("type", out var typeElement))
+                        continue;
+                    var type = typeElement.GetString();
+                    if (type == "image" &&
+                        block.TryGetProperty("data", out var dataElement) &&
+                        dataElement.ValueKind == JsonValueKind.String)
+                    {
+                        var encoded = dataElement.GetString()!;
+                        var mime = block.TryGetProperty("mimeType", out var mimeElement)
+                            ? mimeElement.GetString() : "image/png";
+                        if (mime is "image/png" or "image/jpeg" &&
+                            encoded.Length is > 0 and <= 15_000_000)
+                        {
+                            content.Add(new { type = "image", mimeType = mime, data = encoded });
+                            added++;
+                        }
+                    }
+                    else if (type == "text" &&
+                             block.TryGetProperty("text", out var textElement) &&
+                             textElement.ValueKind == JsonValueKind.String)
+                    {
+                        var value = textElement.GetString() ?? "";
+                        content.Add(new {
+                            type = "text",
+                            text = value.Length > 100_000 ? value[..100_000] +
+                                "...[truncated]" : value
+                        });
+                        added++;
+                    }
+                }
+                if (added > 0)
+                    return;
+            }
+        }
+        catch (JsonException) { }
+        content.Add(new {
+            type = "text",
+            text = output.Length > 100_000 ? output[..100_000] + "...[truncated]" : output
+        });
+    }
+
     private static object InvokeTool(HttpClient client, SoilPaths paths, JsonElement parameters)
     {
         var name = parameters.GetProperty("name").GetString();
@@ -252,6 +331,19 @@ internal static class SoilComputerCli
                     });
                     break;
                 }
+                case "soil_vm_cua_catalog":
+                {
+                    var vmId = args.GetProperty("vm_id").GetString()!;
+                    var nameElement = args.TryGetProperty("name", out var nameProp)
+                        ? nameProp.GetString() : null;
+                    var toolName = string.IsNullOrWhiteSpace(nameElement) ? "list_tools" : "describe";
+                    var input = string.IsNullOrWhiteSpace(nameElement)
+                        ? JsonSerializer.SerializeToElement(new { })
+                        : JsonSerializer.SerializeToElement(new { name = nameElement });
+                    var response = CuaCall(client, paths, vmId, toolName, input);
+                    AddCuaContent(content, response.GetProperty("output").GetString());
+                    break;
+                }
                 case "soil_vm_cua_call":
                 {
                     var vmId = args.GetProperty("vm_id").GetString()!;
@@ -259,7 +351,7 @@ internal static class SoilComputerCli
                     var body = args.TryGetProperty("arguments", out var provided)
                         ? provided.Clone() : JsonSerializer.SerializeToElement(new { });
                     var result = CuaCall(client, paths, vmId, tool, body);
-                    content.Add(new { type = "text", text = result.GetProperty("output").GetString() });
+                    AddCuaContent(content, result.GetProperty("output").GetString());
                     break;
                 }
                 case "soil_vm_action":
