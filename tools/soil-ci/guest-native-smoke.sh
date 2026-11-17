@@ -58,6 +58,14 @@ gcc -static -O2 "$tmp/native.c" -o "$tmp/native-app"
 python3 "$repo/soil-sdk/tools/soil.py" native "$tmp/native-app" \
   --id org.soil.smoke --name "CI Native SOL App" --arg=--sol -o "$tmp/NativeSmoke.sol"
 python3 "$repo/soil-sdk/tools/soil.py" verify "$tmp/NativeSmoke.sol"
+
+# Exercise a real third-party Linux application binary, not only our C fixture.
+# busybox-static is supplied by Ubuntu in CI and is never shipped in the MSI.
+busybox_elf="$(command -v busybox)"
+[[ -f "$busybox_elf" ]] || { echo "busybox-static not installed" >&2; exit 1; }
+python3 "$repo/soil-sdk/tools/soil.py" native "$busybox_elf" \
+  --id org.soil.busybox --name "BusyBox CI" --arg=echo \
+  --arg=soil-third-party-ok -o "$tmp/BusyBox.sol"
 truncate -s 10G "$tmp/data.img"
 
 qemu-system-x86_64 \
@@ -120,4 +128,6 @@ ssh "${ssh_opts[@]}" tc@127.0.0.1 "grep '^Exec=/bin/soil launch org.soil.smoke$'
 ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/soil launch org.soil.smoke && test -f /tmp/soil-sol-guest-executed"
 ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/soil list | grep org.soil.smoke && /bin/soil remove org.soil.smoke"
 ssh "${ssh_opts[@]}" tc@127.0.0.1 "! /bin/soil list | grep -q org.soil.smoke"
-echo "PASS: real bundled Soil guest boot; raw ELF and native .sol package run/install/launch/remove."
+cat "$tmp/BusyBox.sol" | ssh "${ssh_opts[@]}" tc@127.0.0.1 "cat > /tmp/BusyBox.sol"
+ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/soil run /tmp/BusyBox.sol | grep -x soil-third-party-ok"
+echo "PASS: real bundled Soil guest boot; raw ELF, native .sol lifecycle, and third-party BusyBox binary."
