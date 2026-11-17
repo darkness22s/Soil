@@ -271,7 +271,7 @@ internal static class SoilComputerCli
                         var encoded = dataElement.GetString()!;
                         var mime = block.TryGetProperty("mimeType", out var mimeElement)
                             ? mimeElement.GetString() : "image/png";
-                        if (mime is "image/png" or "image/jpeg" &&
+                        if ((mime is "image/png" or "image/jpeg") &&
                             encoded.Length is > 0 and <= 15_000_000)
                         {
                             content.Add(new { type = "image", mimeType = mime, data = encoded });
