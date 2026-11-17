@@ -6,7 +6,7 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 output="${1:-$repo/tools/soil-ci/out/soil}"
 command -v musl-gcc >/dev/null || { echo "Install musl-tools first (musl-gcc missing)" >&2; exit 1; }
 mkdir -p "$(dirname "$output")"
-musl-gcc -static -O2 -Wall -Wextra -Wno-format-truncation \
+musl-gcc -static -DSOIL_STATIC_MUSL -O2 -Wall -Wextra -Wno-format-truncation \
   -o "$output" \
   "$repo/soil-sdk/runtime/soil.c" \
   "$repo/soil-sdk/runtime/sol.c" \
