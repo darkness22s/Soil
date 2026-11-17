@@ -24,6 +24,7 @@ class Element {
   addEventListener(name, callback) { this.handlers[name] = callback; }
   click(event = {}) { return this.handlers.click?.(event); }
   appendChild(child) { this.children.push(child); }
+  querySelectorAll() { return []; }
   replaceChildren(...children) { this.children = children; }
   setAttribute(name, value) { this[name] = value; }
   showModal() { this.open = true; }
