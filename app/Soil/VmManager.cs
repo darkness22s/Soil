@@ -512,8 +512,11 @@ public sealed class VmManager
             setup += " && (cua-driver status >/dev/null 2>&1 || " +
                      "(DISPLAY=:0 nohup cua-driver serve " +
                      ">/tmp/soil-cua-driver.log 2>&1 </dev/null & " +
-                     "sleep 2; cua-driver status >/dev/null 2>&1))";
-        var ready = await RunGuestCommandDetailedAsync(port, key, setup, 20, ct);
+                     "i=0; while [ $i -lt 24 ]; do " +
+                     "cua-driver status >/dev/null 2>&1 && exit 0; " +
+                     "sleep 1; i=$((i+1)); done; " +
+                     "tail -n 20 /tmp/soil-cua-driver.log >&2; exit 1))";
+        var ready = await RunGuestCommandDetailedAsync(port, key, setup, 37, ct);
         if (!ready.Success)
             throw new InvalidOperationException(
                 "The preloaded Cua Driver is missing or its daemon could not start. " +
