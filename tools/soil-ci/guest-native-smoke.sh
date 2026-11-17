@@ -192,12 +192,12 @@ if [[ -n "${SOIL_CUA_DRIVER_ARCHIVE:-}" ]]; then
   echo "PROBE: actual preloaded upstream Cua Driver and tested Xorg dummy"
   ssh "${ssh_opts[@]}" tc@127.0.0.1 \
     "ls -l /bin/cua-driver /bin/soil-ensure-desktop \
-     /opt/soil/xorg/drivers/dummy_drv.so /etc/X11/soil-dummy.conf \
+     /bin/soil-xorg/drivers/dummy_drv.so /etc/X11/soil-dummy.conf \
      /usr/share/doc/cua-driver/LICENSE.md \
      /usr/share/doc/xf86-video-dummy/copyright 2>&1 || true"
   ssh "${ssh_opts[@]}" tc@127.0.0.1 \
     "test -x /bin/cua-driver && test -x /bin/soil-ensure-desktop && \
-     test -f /opt/soil/xorg/drivers/dummy_drv.so && \
+     test -f /bin/soil-xorg/drivers/dummy_drv.so && \
      test -s /usr/share/doc/cua-driver/LICENSE.md && \
      test -s /usr/share/doc/xf86-video-dummy/copyright"
   ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/cua-driver --version"
