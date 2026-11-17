@@ -213,8 +213,18 @@ if [[ -n "${SOIL_CUA_DRIVER_ARCHIVE:-}" ]]; then
   # backend at startup and does not necessarily recover from a missing X socket.
   ssh "${ssh_opts[@]}" tc@127.0.0.1 \
     "DISPLAY=:0 nohup /bin/cua-driver serve >/tmp/cua-driver.log 2>&1 </dev/null &"
-  sleep 3
-  if ! ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 /bin/cua-driver status"; then
+  # First-run initialization takes variable time. Poll the actual socket,
+  # do not assume an arbitrary two- or three-second delay is sufficient.
+  driver_ready=0
+  for attempt in $(seq 1 30); do
+    if ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+      "DISPLAY=:0 /bin/cua-driver status >/dev/null 2>&1"; then
+      driver_ready=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$driver_ready" != 1 ]]; then
     ssh "${ssh_opts[@]}" tc@127.0.0.1 "tail -n 70 /tmp/cua-driver.log" || true
     echo "Cua Driver did not serve inside the guest" >&2
     exit 1
