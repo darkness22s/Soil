@@ -5,7 +5,11 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#if defined(SOIL_STATIC_MUSL)
+#include "soil-loop-compat.h"
+#else
 #include <linux/loop.h>
+#endif
 #include <limits.h>
 #include <pwd.h>
 #include <stdarg.h>
