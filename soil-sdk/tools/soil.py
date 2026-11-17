@@ -6,6 +6,7 @@ The CLI intentionally stays close to the existing .sol format:
   init     scaffold a vanilla, Vite, or React+TS app
   dev      localhost preview, or a frontend dev server, with the window.soil shim
   build    validate, pack and optionally sign a .sol package
+  native   package an existing Linux executable or AppDir
   run      build (if needed) and hand off to the Soil runtime
   verify   inspect a package
   keygen   create an Ed25519 signing key
@@ -251,6 +252,90 @@ def cmd_build(args):
     if not args.sign:
         info("tip: sign with --sign app.key.json before distributing")
     info("package: %s" % out)
+    return 0
+
+
+def validate_native_entry(path):
+    """Accept runnable Linux x86_64 ELF/AppImage or an interpreter script."""
+    if not path.is_file() or path.is_symlink():
+        die("native entry must be a regular file, not a symlink: %s" % path)
+    with path.open("rb") as file:
+        header = file.read(64)
+    elf = (len(header) >= 20 and header[:4] == b"\x7fELF" and
+           header[4:6] == b"\x02\x01" and header[18:20] == b"\x3e\x00" and
+           header[16:18] in (b"\x02\x00", b"\x03\x00"))
+    if not elf and not header.startswith(b"#!"):
+        die("native entry must be a Linux x86_64 ELF, AppImage or shebang script; "
+            ".deb/.rpm/.iso files are not executable apps")
+    if path.stat().st_size > soilmk.MAX_FILE:
+        die("native entry exceeds the %d MiB per-file limit" %
+            (soilmk.MAX_FILE // (1024 * 1024)))
+
+
+def cmd_native(args):
+    """Build a real native-only .sol from a Linux binary or prepared AppDir."""
+    source = Path(args.source).expanduser().resolve()
+    if not source.exists():
+        die("native source does not exist: %s" % source)
+    if not source.is_file() and not source.is_dir():
+        die("native source must be an ELF/AppImage/script or app directory")
+    raw_name = args.name or source.stem if source.is_file() else args.name or source.name
+    name = raw_name.strip()
+    slug = re.sub(r"[^a-z0-9._-]+", "-", name.lower()).strip("._-")[:48]
+    package_id = args.id or ("org.soil." + (slug or "native"))
+    version = args.version
+    out = Path(args.out).expanduser().absolute() if args.out else (
+        Path.cwd() / (re.sub(r"[^A-Za-z0-9._-]", "", name) or "NativeApp")).with_suffix(".sol")
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory(prefix="soil-native-build-") as tmp:
+        staging = Path(tmp)
+        app = staging / "app"
+        if source.is_dir():
+            entry = args.entry or "AppRun"
+            if not soilmk.safe_rel(entry):
+                die("--entry must be a relative path inside the app directory")
+            for root, dirs, files in os.walk(source, followlinks=False):
+                for item in dirs + files:
+                    if (Path(root) / item).is_symlink():
+                        die("native app directory contains a symlink: %s; "
+                            "replace it with its in-tree target before packaging" % item)
+            shutil.copytree(source, app)
+            executable = app / entry
+        else:
+            if args.entry:
+                die("--entry applies only to app directories")
+            app.mkdir()
+            executable = app / "run"
+            shutil.copy2(source, executable)
+
+        validate_native_entry(executable)
+        executable.chmod(executable.stat().st_mode | 0o111)
+        icon = staging / "icon.png"
+        if args.icon:
+            src_icon = Path(args.icon).expanduser().resolve()
+            if not src_icon.is_file() or src_icon.suffix.lower() != ".png":
+                die("--icon must name an existing PNG file")
+            shutil.copy2(src_icon, icon)
+        else:
+            soilmk.solid_png(str(icon))
+        manifest = {
+            "schema": 1, "id": package_id, "name": name, "version": version,
+            "kind": "native", "entry": executable.relative_to(staging).as_posix(),
+            "icon": "icon.png", "permissions": [], "args": args.arg,
+            "terminal": args.terminal,
+        }
+        (staging / "soil.json").write_text(json.dumps(manifest, indent=2) + "\n",
+                                            encoding="utf-8")
+        try:
+            soilmk.pack(str(staging), str(out), args.sign, args.compress)
+        except SystemExit as exc:
+            return int(exc.code or 1)
+    header = soilmk.parse_header(str(out))
+    if soilmk.compute_digest(str(out), header) != header["digest"]:
+        die("native package digest verification failed", 2)
+    info("native package verified: %s" % out)
+    info("run inside Soil Linux: soil run %s" % out.name)
     return 0
 
 
@@ -813,6 +898,20 @@ def build_parser():
     p.add_argument("--no-build", action="store_true", help="skip the configured frontend build")
     p.add_argument("--no-verify", action="store_false", dest="verify", default=True)
     p.set_defaults(func=cmd_build)
+
+    p = sub.add_parser("native", help="package an existing Linux ELF, AppImage or AppDir")
+    p.add_argument("source", help="executable file or prepared app directory")
+    p.add_argument("-o", "--out", help="output .sol file")
+    p.add_argument("--id", help="stable package ID (default: org.soil.<name>)")
+    p.add_argument("--name", help="display name")
+    p.add_argument("--version", default="1.0.0")
+    p.add_argument("--entry", help="app-directory entry (default: AppRun)")
+    p.add_argument("--icon", help="PNG icon (generates a placeholder otherwise)")
+    p.add_argument("--arg", action="append", default=[], help="default launch argument (repeatable)")
+    p.add_argument("--terminal", action="store_true", help="open in a terminal from desktop launchers")
+    p.add_argument("--sign", metavar="KEY", help="Ed25519 private key JSON")
+    p.add_argument("--compress", choices=("gzip", "none"), default="gzip")
+    p.set_defaults(func=cmd_native)
 
     p = sub.add_parser("run", help="build if needed and launch in Soil")
     p.add_argument("target", nargs="?", default=".")
