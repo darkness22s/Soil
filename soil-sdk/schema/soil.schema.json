@@ -18,11 +18,13 @@
     },
     "kind": {
       "type": "string",
-      "enum": ["webapp", "installer", "webapp+native"]
+      "enum": ["webapp", "installer", "webapp+native", "native"]
     },
     "description": { "type": "string", "maxLength": 400 },
     "author": { "type": "string", "maxLength": 120 },
     "homepage": { "type": "string", "maxLength": 300 },
+    "terminal": { "type": "boolean" },
+    "args": { "type": "array", "maxItems": 32, "items": { "type": "string" } },
     "entry": {
       "type": "string",
       "pattern": "^[A-Za-z0-9._/-]+$"
@@ -94,7 +96,7 @@
   },
   "allOf": [
     {
-      "if": { "properties": { "kind": { "enum": ["webapp", "webapp+native"] } } },
+      "if": { "properties": { "kind": { "enum": ["webapp", "webapp+native", "native"] } } },
       "then": { "required": ["entry"] }
     },
     {
