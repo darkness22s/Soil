@@ -455,32 +455,65 @@ public sealed class VmManager
     {
         if (args.ValueKind != JsonValueKind.Object)
             throw new ArgumentException("Cua Driver tool arguments must be a JSON object.");
+        // Metadata works even when the guest's graphics stack is broken.
+        // Only allow known upstream computer tools; do not expose a generic
+        // guest shell/CLI execution escape through this host API.
+        var metadata = tool is "list_tools" or "describe" or "doctor";
         if (!new[]
             {
-                "get_desktop_state", "get_window_state", "list_apps", "click",
-                "double_click", "move_cursor", "scroll", "type_text",
-                "press_key", "get_cursor_position"
+                "list_tools", "describe", "doctor",
+                "get_desktop_state", "get_window_state", "get_screen_size",
+                "get_cursor_position", "list_apps", "list_windows",
+                "launch_app", "activate_app", "click", "right_click",
+                "double_click", "move_cursor", "scroll", "drag", "type_text",
+                "press_key", "hotkey", "set_value", "zoom"
             }.Contains(tool, StringComparer.Ordinal))
             throw new ArgumentException("Unsupported Cua Driver tool: " + tool);
 
-        await WaitForNativeGuestReadyAsync(machineId, ct);
+        if (metadata)
+        {
+            var vm = Get(machineId);
+            if (vm is null || vm.Status != "running")
+                throw new InvalidOperationException(
+                    "The selected VM must be running to inspect its bundled Cua Driver.");
+        }
+        else
+            await WaitForNativeGuestReadyAsync(machineId, ct);
         var endpoint = GetSshEndpoint(machineId)
             ?? throw new InvalidOperationException("Selected VM has no live guest SSH tunnel.");
         var (_, key, port) = endpoint;
-        // This is the pinned upstream binary embedded by the Windows installer.
-        // Disable the upstream default telemetry before ever starting its daemon.
+        // Disable upstream default telemetry even for metadata-only calls.
         var setup = "command -v cua-driver >/dev/null 2>&1 && " +
-                    "cua-driver telemetry disable >/dev/null 2>&1 && " +
-                    "(cua-driver status >/dev/null 2>&1 || " +
-                    "(nohup cua-driver serve >/tmp/soil-cua-driver.log 2>&1 </dev/null & " +
-                    "sleep 2; cua-driver status >/dev/null 2>&1))";
+                    "cua-driver telemetry disable >/dev/null 2>&1";
+        if (!metadata)
+            setup += " && (cua-driver status >/dev/null 2>&1 || " +
+                     "(DISPLAY=:0 nohup cua-driver serve " +
+                     ">/tmp/soil-cua-driver.log 2>&1 </dev/null & " +
+                     "sleep 2; cua-driver status >/dev/null 2>&1))";
         var ready = await RunGuestCommandDetailedAsync(port, key, setup, 20, ct);
         if (!ready.Success)
             throw new InvalidOperationException(
                 "The preloaded Cua Driver is missing or its daemon could not start. " +
-                "Verify the VM graphical desktop, the bundled core2.gz and the driver log. " +
+                "Verify the VM graphical desktop, bundled core2.gz and driver log. " +
                 ready.Details);
-        var command = "DISPLAY=:0 cua-driver call " + ShellQuote(tool) +
+        string command;
+        if (tool == "list_tools")
+            command = "cua-driver list-tools";
+        else if (tool == "doctor")
+            command = "DISPLAY=:0 cua-driver doctor";
+        else if (tool == "describe")
+        {
+            if (!args.TryGetProperty("name", out var nameElement) ||
+                nameElement.ValueKind != JsonValueKind.String)
+                throw new ArgumentException("describe requires a tool name.");
+            var toolName = nameElement.GetString()!;
+            if (toolName.Length is < 1 or > 60 ||
+                !toolName.All(ch => char.IsAsciiLetterOrDigit(ch) || ch == '_'))
+                throw new ArgumentException("Invalid Cua Driver tool name.");
+            command = "cua-driver describe " + ShellQuote(toolName);
+        }
+        else
+            command = "DISPLAY=:0 cua-driver call " + ShellQuote(tool) +
                       " " + ShellQuote(args.GetRawText());
         var result = await RunGuestCommandDetailedAsync(port, key, command, 50, ct);
         if (!result.Success)
