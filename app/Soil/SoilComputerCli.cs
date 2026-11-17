@@ -34,7 +34,7 @@ internal static class SoilComputerCli
             Console.WriteLine(JsonSerializer.Serialize(result, Pretty));
             return 0;
         }
-        if (args.Length is 5 or 6 && args[2] == "cua")
+        if ((args.Length == 5 || args.Length == 6) && args[2] == "cua")
         {
             using var doc = JsonDocument.Parse(args.Length == 6 ? args[5] : "{}");
             var result = CuaCall(client, paths, args[3], args[4], doc.RootElement);
