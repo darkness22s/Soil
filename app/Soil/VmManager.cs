@@ -435,16 +435,21 @@ public sealed class VmManager
             var endpoint = GetSshEndpoint(machineId);
             if (endpoint is { } ssh)
             {
-                // Check the transport BEFORE copying a potentially large app.
-                if (await RunGuestCommandAsync(ssh.Port, ssh.Key, "true", 5, ct))
+                // A live SSH tunnel is NOT proof that a graphical desktop
+                // exists. Installing into a guest without X11 led to intermittent
+                // 'launched' processes with no visible window. Wait for X11.
+                if (await RunGuestCommandAsync(
+                        ssh.Port, ssh.Key, "DISPLAY=:0 xset q >/dev/null 2>&1", 5, ct))
                     return;
             }
             await Task.Delay(1000, ct);
         }
 
         throw new InvalidOperationException(
-            "The Soil Linux desktop did not become ready within 90 seconds. " +
-            "Check the VM screen and the bundled guest image, then retry Launch.");
+            "The Soil Linux graphical desktop (X11 display :0) did not become ready " +
+            "within 90 seconds. The VM or SSH may have started without a usable " +
+            "desktop. Check the VM screen and guest startup before retrying the " +
+            "existing imported app; do not upload another copy.");
     }
 
     internal async Task DeployNativeLinuxAppAsync(
