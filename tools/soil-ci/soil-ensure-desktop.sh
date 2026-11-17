@@ -10,7 +10,7 @@ if xset q >/dev/null 2>&1; then
     exit 0
 fi
 
-if [ ! -f /opt/soil/xorg/drivers/dummy_drv.so ] ||
+if [ ! -f /bin/soil-xorg/drivers/dummy_drv.so ] ||
    [ ! -f /etc/X11/soil-dummy.conf ] ||
    [ ! -x /usr/local/bin/Xorg ]; then
     echo "Soil desktop: Xorg virtual-display runtime missing from guest image" >&2
@@ -25,7 +25,7 @@ if mkdir /tmp/soil/desktop-starting 2>/dev/null; then
         # and the official Cua Driver share this exact X11 session.
         sudo -n sh -c 'nohup /usr/local/bin/Xorg :0 \
           -config /etc/X11/soil-dummy.conf \
-          -modulepath /opt/soil/xorg,/usr/local/lib/xorg/modules \
+          -modulepath /bin/soil-xorg,/usr/local/lib/xorg/modules \
           -noreset -nolisten tcp -ac -logfile /tmp/soil-xorg.log \
           -novtswitch >/tmp/soil-xorg-stdout.log 2>&1 </dev/null &'
     fi
