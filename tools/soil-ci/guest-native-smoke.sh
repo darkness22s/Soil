@@ -180,6 +180,12 @@ if [[ -n "${SOIL_CUA_DRIVER_ARCHIVE:-}" ]]; then
   ssh "${ssh_opts[@]}" tc@127.0.0.1 \
     "DISPLAY=:0 nohup /tmp/cua-driver serve >/tmp/cua-driver.log 2>&1 </dev/null &"
   sleep 3
+  echo "PROBE: actual guest desktop/server diagnostics"
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+    "ps w; ls -la /tmp/.X11-unix /tmp/.X0-lock /dev/fb0 2>&1 || true; \
+     for bin in Xorg Xvesa Xfbdev Xvfb startx xinit dbus-daemon; do \
+       command -v \$bin || true; done; \
+     ls /usr/local/etc/X11 /home/tc/.xsession /home/tc/.xinitrc 2>&1 || true" || true
   if ! ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 /tmp/cua-driver status"; then
     ssh "${ssh_opts[@]}" tc@127.0.0.1 "tail -n 70 /tmp/cua-driver.log" || true
     echo "Cua Driver did not serve inside the guest" >&2
