@@ -2,47 +2,48 @@
 
 ## Current implementation
 
-Every **Windows-hosted Soil VM** now has a VM-scoped computer-use transport exposed by the Soil app itself:
-`GET /api/vms/{id}/computer/screenshot`, `POST /api/vms/{id}/computer/action`,
-`Soil.exe vm computer ...`, and an stdio MCP server `Soil.exe vm computer mcp`.
-The bridge is available before installing anything in the Linux guest, and a
-stopped VM has no computer-use process. The MCP tools are `soil_list_vms`,
-`soil_vm_screenshot`, and `soil_vm_action`; actions return a fresh screenshot
-for visual verification. Access to the computer endpoints requires the
-per-install token stored under Soil's `keys/` directory.
+The Windows Soil installer now **embeds an authentic upstream Cua Driver
+0.49.5 x86_64 ELF** and its MIT notice into the guest `core2.gz` at
+`/usr/local/bin/cua-driver`. The release archive is checksum pinned:
+`e01fe9dd44e6a7d2d8ac128737fb0204c6deb57929da6cc2871c049eda96f7dc`
+(https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.49.5).
+The actual upstream binary is downloaded **at build time only**, not on
+user devices. The license text is included at
+`/usr/local/share/doc/cua-driver/LICENSE.md` in the VM and bundled
+in the Windows installation. See `tools/soil-ci/fetch-cua-driver.sh`,
+`inject-native-guest.py`, `app/build.ps1` and both Windows workflows.
 
-The VM-scoped bridge uses Soil's existing host framebuffer and PS/2 input
-transport. **It is not the upstream `cua-driver` binary or SDK.** The MCP
-protocol and screenshot/action/verification loop are inspired by the
-open-source Cua Driver agent interface, but the runtime is currently Soil's
-own VM input transport. We intentionally do not claim to expose Cua Driver's
-accessibility tree, per-window background input, or pixel-perfect absolute
-pointer targeting: the VM engine currently has only relative PS/2 motion.
+Every Windows-hosted Soil VM also has host-side screenshot and PS/2
+action endpoints and a stdio MCP server. The agent tools are
+`soil_list_vms`, `soil_vm_screenshot`, `soil_vm_action`, and
+`soil_vm_cua_call`. The last tool invokes the **genuine upstream
+guest binary**, without exposing SSH credentials. The guest daemon is
+started on first use, with upstream telemetry explicitly disabled.
+No guest Cua daemon runs while its VM is stopped.
 
-## Why the official Cua Driver is not in Tiny Core
+## Remaining runtime limitation: guest graphical desktop
 
-Cua Driver, maintained at https://github.com/trycua/cua in
-`libs/cua-driver/`, is MIT licensed. It is designed to run **inside a
-supported interactive desktop session**. Linux support assumes a compatible
-glibc-based distribution, X11/XWayland and AT-SPI 2 for accessibility.
-Soil's current default Windows guest is a compact Tiny Core Linux image
-(`vmlinuz64`, `core2.gz`, `soil.squashfs`). **Tiny Core itself does use
-glibc**, but we have not verified the specific bundled guest's glibc version,
-X11 server, AT-SPI session bus and shared library dependencies against a
-pinned upstream Cua Driver release. Copying the binary without verifying it
-would risk another installed-but-nonlaunching integration.
+A real QEMU boot proved the upstream binary dynamically links and runs.
+Its `serve` daemon starts, but native `get_desktop_state` failed when
+the default guest did not start an X11 server. `/dev/fb0` was not an
+operational kernel framebuffer in that test, so the default guest
+`Xfbdev` server also failed. This is **not** an AppImage import failure:
+the VM must provide a real X11 desktop before Cua can capture, click
+or expose accessibility/window state.
 
-To fully meet the requested **preloaded upstream Cua Driver in every VM**
-feature, the actual bundled guest must first be audited for the driver's runtime
-requirements, then extended only with any missing X11/AT-SPI libraries or
-services. A full distribution replacement may not be necessary. Then pin a verified Cua Driver release,
-ship its actual MIT license text and dependency notices, provision an
-unprivileged guest daemon on *explicit VM start*, gate its MCP/IPC channel to
-the selected VM, and test screenshot, accessibility snapshot, click, text,
-and window targeting in the **actual booted guest** before shipping. Its
-lifetime should follow VM start/stop and preserve isolation. Unsupported
-guest variants must return a capability error, not pretend Cua Driver is
-running.
+The host-side computer tools remain usable for machine frames even if
+the native Cua interface is unavailable. The app launch path now waits
+for `DISPLAY=:0 xset q` instead of accepting SSH as GUI readiness and
+returns a specific error on failure. The dedicated Cua CI probe is
+non-blocking and intentionally checks actual `get_desktop_state`,
+not just `--version`.
+
+Cua Driver requires a working X11/XWayland session; AT-SPI window
+accessibility additionally requires an AT-SPI D-Bus bus. Tiny Core itself
+uses glibc and our bundled guest resolves the driver's direct shared
+libraries. The engineering next step is ensuring the VM's graphical
+session starts and the Soil viewer shows that same session; native
+desktop automation is not declared fully verified until it does.
 
 ## Agent instructions today
 
@@ -51,7 +52,7 @@ Use `Soil.exe vm computer mcp` to connect a local MCP-capable agent, or
 `Soil.exe vm computer action <id> '{...}'`. Always inspect a screenshot
 before acting and verify the returned post-action screenshot. Keyboard/text
 are ASCII PS/2; mouse coordinates can drift with guest acceleration.
-Scroll, drag, accessibility trees and Unicode typing are not yet supported.
+The host bridge lacks scroll, drag, accessibility trees and Unicode typing; the upstream Cua Driver tool surface can provide those capabilities only when its guest X11/AT-SPI session is operational.
 Do not claim an imported AppImage opened without an observed frame.
 
 ## Upstream references
@@ -61,6 +62,4 @@ Do not claim an imported AppImage opened without an observed frame.
 - Install prerequisites: https://github.com/trycua/cua/blob/main/docs/content/docs/cua-driver/quickstart.mdx
 - Cua project license: https://github.com/trycua/cua/blob/main/LICENSE
 
-No Cua Driver binaries, model weights or source code have been vendored in the
-current Soil bridge, so no Cua redistributable license is being attached to
-the installer.
+The Windows build now bundles the authentic pinned Cua Driver ELF and its MIT notice; it does not vendor the unrelated Cua Spaces or Cua Driver Bench components.
