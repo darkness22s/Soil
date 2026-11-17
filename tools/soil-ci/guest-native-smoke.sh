@@ -238,6 +238,29 @@ if [[ -n "${SOIL_CUA_DRIVER_ARCHIVE:-}" ]]; then
   fi
   ssh "${ssh_opts[@]}" tc@127.0.0.1 \
     "test -s /tmp/cua-desktop-state.json && wc -c /tmp/cua-desktop-state.json"
+  # Print only the response shape, never screenshot bytes, so the MCP
+  # adapter can preserve genuine image content in machine-readable results.
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 "cat /tmp/cua-desktop-state.json" \
+    > "$tmp/cua-desktop-state.json"
+  python3 - "$tmp/cua-desktop-state.json" <<'PY'
+import json, sys
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+print("CUA desktop top-level fields:", list(payload) if isinstance(payload, dict) else type(payload).__name__)
+if isinstance(payload, dict):
+    for key, value in payload.items():
+        if isinstance(value, dict):
+            print("CUA field", key, "nested keys:", list(value)[:25])
+        elif isinstance(value, list):
+            print("CUA field", key, "elements:", len(value),
+                  "first keys:", list(value[0])[:20] if value and isinstance(value[0], dict) else "")
+        elif isinstance(value, str):
+            print("CUA field", key, "text length:", len(value))
+        else:
+            print("CUA field", key, "value type:", type(value).__name__)
+PY
+  echo "PROBE: upstream move_cursor input schema"
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+    "DISPLAY=:0 /bin/cua-driver describe move_cursor | head -c 3500" || true
   # Verify actual Cua mouse actions against the same observed desktop.
   # The Xorg dummy driver uses exact X11 coordinates, not Soil's relative PS/2
   # fallback. The action CLI returns a structured effect/result.
