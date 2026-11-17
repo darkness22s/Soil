@@ -12,11 +12,13 @@ import argparse
 import gzip
 import os
 import stat
+import struct
 import tempfile
 from pathlib import Path
 
 MAGIC = (b"070701", b"070702")
 GUEST_PATH = "bin/soil-native"
+SOL_GUEST_PATH = "bin/soil"
 
 
 def align4(data: bytes) -> bytes:
@@ -34,13 +36,30 @@ def newc_entry(name: str, data: bytes, mode: int, inode: int) -> bytes:
     return align4(header + encoded) + align4(data)
 
 
-def create_overlay(script: bytes) -> bytes:
+def validate_runtime(binary: bytes) -> None:
+    """Only bundle a standalone Linux x86_64 ELF; no dynamic loader dependency."""
+    if (len(binary) < 64 or binary[:6] != b"\x7fELF\x02\x01" or
+            binary[18:20] != b"\x3e\x00"):
+        raise ValueError("Soil guest runtime must be a Linux x86_64 ELF executable.")
+    if len(binary) > 16 * 1024 * 1024:
+        raise ValueError("Soil guest runtime is unexpectedly large.")
+    phoff = struct.unpack_from("<Q", binary, 32)[0]
+    phentsize, phnum = struct.unpack_from("<HH", binary, 54)
+    if phentsize < 56 or phnum == 0 or phoff + phentsize * phnum > len(binary):
+        raise ValueError("Soil guest runtime has invalid ELF program headers.")
+    for index in range(phnum):
+        if struct.unpack_from("<I", binary, phoff + index * phentsize)[0] == 3:
+            raise ValueError("Soil guest runtime must be statically linked (PT_INTERP found).")
+
+
+def create_overlay(script: bytes, runtime: bytes | None = None) -> bytes:
     if not script.startswith(b"#!/bin/sh\n"):
         raise ValueError("The guest launcher must be a POSIX shell script.")
-    return (
-        newc_entry(GUEST_PATH, script, stat.S_IFREG | 0o755, 91001)
-        + newc_entry("TRAILER!!!", b"", 0, 91002)
-    )
+    overlay = newc_entry(GUEST_PATH, script, stat.S_IFREG | 0o755, 91001)
+    if runtime is not None:
+        validate_runtime(runtime)
+        overlay += newc_entry(SOL_GUEST_PATH, runtime, stat.S_IFREG | 0o755, 91003)
+    return overlay + newc_entry("TRAILER!!!", b"", 0, 91002)
 
 
 def check_archive(cpio: bytes) -> None:
@@ -79,14 +98,17 @@ def check_archive(cpio: bytes) -> None:
         raise ValueError("Source initramfs lacks the cpio trailer.")
 
 
-def inject(source: Path, destination: Path, launcher: Path) -> None:
+def inject(source: Path, destination: Path, launcher: Path, runtime: Path | None = None) -> None:
     if source.stat().st_size < 65536:
         raise ValueError("The source core2.gz is missing (or is a Git LFS pointer).")
     contents = gzip.decompress(source.read_bytes())
     if GUEST_PATH.encode() + b"\0" in contents:
         raise ValueError("The initramfs already contains soil-native; supply unmodified image sources.")
+    if runtime is not None and SOL_GUEST_PATH.encode() + b"\0" in contents:
+        raise ValueError("The initramfs already contains the Soil SDK runtime.")
     check_archive(contents)
-    overlay = create_overlay(launcher.read_bytes().replace(b"\r\n", b"\n"))
+    binary = runtime.read_bytes() if runtime is not None else None
+    overlay = create_overlay(launcher.read_bytes().replace(b"\r\n", b"\n"), binary)
     # Each cpio archive must start on a 4-byte boundary.
     image = contents + b"\0" * ((-len(contents)) % 4) + overlay
     output = gzip.compress(image, compresslevel=6, mtime=0)
@@ -102,14 +124,19 @@ def inject(source: Path, destination: Path, launcher: Path) -> None:
     print(f"Embedded native Linux launcher in {destination} ({len(output)} bytes)")
 
 
-def verify(image: Path, launcher: Path) -> None:
+def verify(image: Path, launcher: Path, runtime: Path | None = None) -> None:
     payload = gzip.decompress(image.read_bytes())
     script = launcher.read_bytes().replace(b"\r\n", b"\n")
     if (GUEST_PATH.encode() + b"\0" not in payload or script not in payload):
         raise ValueError("The bundled core2.gz does not contain the required guest native launcher.")
+    if runtime is not None:
+        binary = runtime.read_bytes()
+        validate_runtime(binary)
+        if SOL_GUEST_PATH.encode() + b"\0" not in payload or binary not in payload:
+            raise ValueError("The bundled image does not contain the required static Soil SDK runtime.")
     if len(payload) <= 65536:
         raise ValueError("The bundled guest image is unexpectedly small.")
-    print(f"Verified native Linux app launcher embedded in {image}")
+    print(f"Verified native launcher and Soil SDK runtime in {image}")
 
 
 def main() -> None:
@@ -118,12 +145,14 @@ def main() -> None:
     parser.add_argument("destination", type=Path, help="Patched initramfs output")
     parser.add_argument("--launcher", type=Path, default=Path(__file__).resolve().parents[2] /
                         "soil-sdk" / "runtime" / "soil-native")
+    parser.add_argument("--runtime", type=Path,
+                        help="Static x86_64 Linux ELF produced by build-guest-cli.sh")
     parser.add_argument("--verify", action="store_true", help="Verify a patched core2.gz")
     args = parser.parse_args()
     if args.verify:
-        verify(args.source, args.launcher)
+        verify(args.source, args.launcher, args.runtime)
     else:
-        inject(args.source, args.destination, args.launcher)
+        inject(args.source, args.destination, args.launcher, args.runtime)
 
 
 if __name__ == "__main__":
