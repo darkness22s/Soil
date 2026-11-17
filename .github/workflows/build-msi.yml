@@ -31,10 +31,14 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
       - name: Build Linux guest SDK CLI
         run: bash tools/soil-ci/build-guest-cli.sh tools/soil-ci/out/soil
+      - name: Download verified upstream Cua Driver for every guest
+        run: bash tools/soil-ci/fetch-cua-driver.sh tools/soil-ci/out/cua-driver
       - uses: actions/upload-artifact@v4
         with:
           name: soil-linux-guest-cli
-          path: tools/soil-ci/out/soil
+          path: |
+            tools/soil-ci/out/soil
+            tools/soil-ci/out/cua-driver
           if-no-files-found: error
 
   build:
@@ -70,7 +74,7 @@ jobs:
 
       - name: Build MSI
         shell: pwsh
-        run: .\app\build.ps1 -SkipEngine -GuestSoilExecutable .\tools\soil-ci\out\soil
+        run: .\app\build.ps1 -SkipEngine -GuestSoilExecutable .\tools\soil-ci\out\soil -GuestCuaDriver .\tools\soil-ci\out\cua-driver
 
       - name: Upload MSI artifact
         id: upload
