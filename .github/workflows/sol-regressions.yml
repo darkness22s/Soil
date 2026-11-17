@@ -50,3 +50,6 @@ jobs:
       - name: Reproduce and prevent Linux app import CLI errors
         shell: pwsh
         run: dotnet run --project .\tests\Soil.CliSmoke\Soil.CliSmoke.csproj -c Release --nologo
+      - name: Exercise Soil VM computer-use transport
+        shell: pwsh
+        run: dotnet run --project .\tests\Soil.ComputerSmoke\Soil.ComputerSmoke.csproj -c Release --nologo
