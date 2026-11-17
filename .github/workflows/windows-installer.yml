@@ -26,14 +26,29 @@ jobs:
         run: bash tools/soil-ci/fetch-cua-driver.sh tools/soil-ci/out/cua-driver
       - name: Fetch real-VM-verified Xorg virtual display module and notices
         run: bash tools/soil-ci/fetch-xorg-dummy.sh tools/soil-ci/out
+      # Package as one archive: upload-artifact treats multi-file globs as
+      # independent paths and previously dropped the Xorg license/module.
+      - name: Package complete Linux guest runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -czf tools/soil-ci/out/guest-runtime.tar.gz -C tools/soil-ci/out \
+            soil cua-driver dummy_drv.so xf86-video-dummy-LICENSE.txt
+          tar -tzf tools/soil-ci/out/guest-runtime.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: soil-linux-guest-cli
-          path: |
-            tools/soil-ci/out/soil
-            tools/soil-ci/out/cua-driver
-            tools/soil-ci/out/dummy_drv.so
-            tools/soil-ci/out/xf86-video-dummy-LICENSE.txt
+          path: tools/soil-ci/out
+      - name: Extract and verify guest runtime bundle
+        shell: pwsh
+        run: |
+          tar -xzf tools/soil-ci/out/guest-runtime.tar.gz -C tools/soil-ci/out
+          if ($LASTEXITCODE -ne 0) { throw 'Could not extract Linux guest runtime bundle' }
+          foreach ($file in @('soil','cua-driver','dummy_drv.so','xf86-video-dummy-LICENSE.txt')) {
+            if (-not (Test-Path -LiteralPath (Join-Path 'tools/soil-ci/out' $file))) {
+              throw "Guest runtime artifact missing: $file"
+            }
+          }/guest-runtime.tar.gz
           if-no-files-found: error
 
   build-installer:
