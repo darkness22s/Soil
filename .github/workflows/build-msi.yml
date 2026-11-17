@@ -6,12 +6,16 @@ on:
     paths:
       - 'app/**'
       - 'engine/**'
+      - 'soil-sdk/runtime/**'
+      - 'tools/soil-ci/**'
       - '.github/workflows/build-msi.yml'
   pull_request:
     branches: [main]
     paths:
       - 'app/**'
       - 'engine/**'
+      - 'soil-sdk/runtime/**'
+      - 'tools/soil-ci/**'
       - '.github/workflows/build-msi.yml'
   workflow_dispatch:
 
@@ -19,7 +23,22 @@ permissions:
   contents: read
 
 jobs:
+  guest-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install static Linux toolchain
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
+      - name: Build Linux guest SDK CLI
+        run: bash tools/soil-ci/build-guest-cli.sh tools/soil-ci/out/soil
+      - uses: actions/upload-artifact@v4
+        with:
+          name: soil-linux-guest-cli
+          path: tools/soil-ci/out/soil
+          if-no-files-found: error
+
   build:
+    needs: guest-runtime
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -27,6 +46,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           lfs: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: soil-linux-guest-cli
+          path: tools/soil-ci/out
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v4
@@ -46,7 +70,7 @@ jobs:
 
       - name: Build MSI
         shell: pwsh
-        run: .\app\build.ps1 -SkipEngine
+        run: .\app\build.ps1 -SkipEngine -GuestSoilExecutable .\tools\soil-ci\out\soil
 
       - name: Upload MSI artifact
         id: upload
