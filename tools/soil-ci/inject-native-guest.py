@@ -21,7 +21,7 @@ GUEST_PATH = "bin/soil-native"
 SOL_GUEST_PATH = "bin/soil"
 CUA_DRIVER_PATH = "bin/cua-driver"
 CUA_LICENSE_PATH = "usr/share/doc/cua-driver/LICENSE.md"
-XORG_DUMMY_PATH = "opt/soil/xorg/drivers/dummy_drv.so"
+XORG_DUMMY_PATH = "bin/soil-xorg/drivers/dummy_drv.so"
 XORG_CONFIG_PATH = "etc/X11/soil-dummy.conf"
 XORG_ENSURE_PATH = "bin/soil-ensure-desktop"
 XORG_LICENSE_PATH = "usr/share/doc/xf86-video-dummy/copyright"
@@ -80,12 +80,12 @@ def create_overlay(script: bytes, runtime: bytes | None = None,
         raise ValueError("The guest launcher must be a POSIX shell script.")
     # Explicit parent directories are required by Linux's initramfs unpacker.
     # /usr/local may be remounted from soil.squashfs, so keep guest tools in
-    # /bin and the Xorg driver in /opt instead.
+    # /bin and the Xorg driver in /bin instead.
     overlay = b""
     for inode, dirname in enumerate((
         "usr/share", "usr/share/doc", "usr/share/doc/cua-driver",
         "usr/share/doc/xf86-video-dummy", "etc/X11",
-        "opt/soil", "opt/soil/xorg", "opt/soil/xorg/drivers"
+        "bin/soil-xorg", "bin/soil-xorg/drivers"
     ), 91100):
         overlay += newc_entry(dirname, b"", stat.S_IFDIR | 0o755, inode)
     overlay += newc_entry(GUEST_PATH, script, stat.S_IFREG | 0o755, 91001)
