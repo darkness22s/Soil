@@ -25,10 +25,14 @@ for file in vmlinuz64 core2.gz soil.squashfs; do
     { echo "Actual private LFS image $file missing, refusing fake boot" >&2; exit 1; }
 done
 
+# Build the exact static SDK runtime that Windows installer CI embeds.
+bash "$repo/tools/soil-ci/build-guest-cli.sh" "$tmp/soil"
 ssh-keygen -q -t ed25519 -N "" -f "$tmp/guest" -C soil-guest-smoke
 python3 "$repo/tools/soil-ci/inject-native-guest.py" \
   "$images/core2.gz" "$tmp/core2-native.gz" \
-  --launcher "$repo/soil-sdk/runtime/soil-native"
+  --launcher "$repo/soil-sdk/runtime/soil-native" --runtime "$tmp/soil"
+python3 "$repo/tools/soil-ci/inject-native-guest.py" \
+  "$tmp/core2-native.gz" "$tmp/core2-native.gz" --runtime "$tmp/soil" --verify
 dotnet run --project "$repo/tools/soil-ci/GuestInitrdSmoke/GuestInitrdSmoke.csproj" -- \
   --prepare "$tmp/core2-native.gz" "$tmp/machine" "$tmp/guest.pub"
 initrd="$tmp/machine/boot/core2-ssh.gz"
@@ -36,17 +40,40 @@ initrd="$tmp/machine/boot/core2-ssh.gz"
 
 cat > "$tmp/native.c" <<'EOF'
 #include <fcntl.h>
+#include <string.h>
 #include <unistd.h>
-int main(void) {
-    int fd = open("/tmp/soil-native-guest-executed", O_CREAT|O_TRUNC|O_WRONLY, 0600);
+int main(int argc, char **argv) {
+    int packaged = argc > 1 && strcmp(argv[1], "--sol") == 0;
+    const char *path = packaged ? "/tmp/soil-sol-guest-executed" :
+                                     "/tmp/soil-native-guest-executed";
+    int fd = open(path, O_CREAT|O_TRUNC|O_WRONLY, 0600);
     if (fd < 0) return 1;
     write(fd, "ok\n", 3);
     close(fd);
-    sleep(20);
+    if (!packaged) sleep(20);
     return 0;
 }
 EOF
 gcc -static -O2 "$tmp/native.c" -o "$tmp/native-app"
+python3 "$repo/soil-sdk/tools/soil.py" native "$tmp/native-app" \
+  --id org.soil.smoke --name "CI Native SOL App" --arg=--sol -o "$tmp/NativeSmoke.sol"
+python3 "$repo/soil-sdk/tools/soil.py" verify "$tmp/NativeSmoke.sol"
+
+# Exercise a real third-party Linux application binary, not only our C fixture.
+# busybox-static is supplied by Ubuntu in CI and is never shipped in the MSI.
+busybox_elf="$(command -v busybox)"
+[[ -f "$busybox_elf" ]] || { echo "busybox-static not installed" >&2; exit 1; }
+mkdir -p "$tmp/BusyBoxDir"
+cp "$busybox_elf" "$tmp/BusyBoxDir/busybox"
+cat > "$tmp/BusyBoxDir/AppRun" <<'EOF'
+#!/bin/sh
+# BusyBox selects its applet from argv[0], so launch it under its own name.
+exec "$APPDIR/app/busybox" echo soil-third-party-ok
+EOF
+chmod 755 "$tmp/BusyBoxDir/AppRun"
+python3 "$repo/soil-sdk/tools/soil.py" native "$tmp/BusyBoxDir" \
+  --id org.soil.busybox --name "BusyBox CI" \
+  -o "$tmp/BusyBox.sol"
 truncate -s 10G "$tmp/data.img"
 
 qemu-system-x86_64 \
@@ -87,9 +114,9 @@ if [[ "$reachable" != 1 ]]; then
   exit 1
 fi
 
-if ! ssh "${ssh_opts[@]}" tc@127.0.0.1 "test -x /bin/soil-native && command -v soil-native"; then
-  echo "Guest authenticated SSH, but native launcher is missing from rootfs." >&2
-  ssh "${ssh_opts[@]}" tc@127.0.0.1 "ls -l /bin/soil-native /usr/bin/soil-native /usr/local/bin/soil-native 2>&1; mount | grep -E '/usr/local|/bin' || true" >&2 || true
+if ! ssh "${ssh_opts[@]}" tc@127.0.0.1 "test -x /bin/soil-native && test -x /bin/soil && /bin/soil help >/dev/null"; then
+  echo "Guest authenticated SSH, but native launcher or .sol runtime is missing." >&2
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 "ls -l /bin/soil /bin/soil-native /usr/local/bin/soil 2>&1; mount | grep -E '/usr/local|/bin' || true" >&2 || true
   exit 1
 fi
 
@@ -97,4 +124,18 @@ cat "$tmp/native-app" | ssh "${ssh_opts[@]}" tc@127.0.0.1 "cat > /tmp/soil-ci-na
 ssh "${ssh_opts[@]}" tc@127.0.0.1 "soil-native install nativeapp /tmp/soil-ci-native 'CI Native Linux App'"
 ssh "${ssh_opts[@]}" tc@127.0.0.1 "soil-native launch nativeapp && sleep 1 && test -f /tmp/soil-native-guest-executed"
 ssh "${ssh_opts[@]}" tc@127.0.0.1 "soil-native list | grep '^nativeapp$' && soil-native remove nativeapp"
-echo "PASS: real default Soil Linux guest boot, SSH transfer, native x86-64 ELF execution, removal."
+
+# Transfer a genuinely packaged native .sol (header, manifest, SquashFS, digest).
+# It must mount and execute in the actual guest kernel, not on the CI host.
+cat "$tmp/NativeSmoke.sol" | ssh "${ssh_opts[@]}" tc@127.0.0.1 "cat > /tmp/NativeSmoke.sol"
+ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/soil info /tmp/NativeSmoke.sol | grep native"
+ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/soil verify /tmp/NativeSmoke.sol"
+ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/soil run /tmp/NativeSmoke.sol && test -f /tmp/soil-sol-guest-executed"
+ssh "${ssh_opts[@]}" tc@127.0.0.1 "rm /tmp/soil-sol-guest-executed && /bin/soil install /tmp/NativeSmoke.sol"
+ssh "${ssh_opts[@]}" tc@127.0.0.1 "grep '^Exec=/bin/soil launch org.soil.smoke$' ~/.local/share/applications/soil-org.soil.smoke.desktop"
+ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/soil launch org.soil.smoke && test -f /tmp/soil-sol-guest-executed"
+ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/soil list | grep org.soil.smoke && /bin/soil remove org.soil.smoke"
+ssh "${ssh_opts[@]}" tc@127.0.0.1 "! /bin/soil list | grep -q org.soil.smoke"
+cat "$tmp/BusyBox.sol" | ssh "${ssh_opts[@]}" tc@127.0.0.1 "cat > /tmp/BusyBox.sol"
+ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/soil run /tmp/BusyBox.sol | grep -x soil-third-party-ok"
+echo "PASS: real bundled Soil guest boot; raw ELF, native .sol lifecycle, and third-party BusyBox binary."

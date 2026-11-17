@@ -5,7 +5,11 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#if defined(SOIL_STATIC_MUSL)
+#include "soil-loop-compat.h"
+#else
 #include <linux/loop.h>
+#endif
 #include <limits.h>
 #include <pwd.h>
 #include <stdarg.h>
@@ -542,7 +546,8 @@ static void desktop_escape(char *s)
 }
 
 static int write_desktop(const char *path, const char *name, const char *comment,
-                         const char *id, const char *icon, int exec_perm, int terminal)
+                         const char *id, const char *icon, int exec_perm, int terminal,
+                         const char *runner)
 {
     FILE *f = fopen(path, "w");
     if (!f)
@@ -552,11 +557,11 @@ static int write_desktop(const char *path, const char *name, const char *comment
             "Type=Application\n"
             "Name=%s\n"
             "Comment=%s\n"
-            "Exec=/usr/local/bin/soil launch %s\n"
+            "Exec=%s launch %s\n"
             "Icon=%s\n"
             "Terminal=%s\n"
             "Categories=Soil;\n",
-            name, comment ? comment : "", id, icon, terminal ? "true" : "false");
+            name, comment ? comment : "", runner, id, icon, terminal ? "true" : "false");
     fclose(f);
     if (exec_perm)
         chmod(path, 0755);
@@ -703,8 +708,10 @@ static int cmd_install(const char *file)
     snprintf(app_entry, sizeof(app_entry), "%s/soil-%s.desktop", appsdir, id);
     snprintf(desk_entry, sizeof(desk_entry), "%s/%s.desktop", deskdir, safe_name);
     int terminal = h.kind == 4 && json_bool_get(m, "terminal", 0);
-    write_desktop(app_entry, safe_name, desc, id, iconpath, 0, terminal);
-    write_desktop(desk_entry, safe_name, desc, id, iconpath, 1, terminal);
+    write_desktop(app_entry, safe_name, desc, id, iconpath, 0, terminal,
+                  h.kind == 4 ? "/bin/soil" : "/usr/local/bin/soil");
+    write_desktop(desk_entry, safe_name, desc, id, iconpath, 1, terminal,
+                  h.kind == 4 ? "/bin/soil" : "/usr/local/bin/soil");
 
     if (installer) {
         jval *inst = json_obj_get(m, "install");
