@@ -81,6 +81,13 @@ static void test_json(void)
     CHECK(json_parse(bad, strlen(bad), err, sizeof(err)) == NULL, "json rejects truncated input");
 }
 
+static void test_kinds(void)
+{
+    CHECK(sol_kind_from_name("native") == 4, "native package kind is recognized");
+    CHECK(!strcmp(sol_kind_name(4), "native"), "native kind displays correctly");
+    CHECK(sol_kind_from_name("unknown") == 0, "unknown kinds rejected");
+}
+
 static void test_sol(const char *pkg)
 {
     char err[128] = "";
@@ -126,6 +133,7 @@ int main(int argc, char **argv)
     printf("== soil core tests ==\n");
     test_sha256();
     test_json();
+    test_kinds();
     if (argc > 1) {
         test_sol(argv[1]);
     } else {
