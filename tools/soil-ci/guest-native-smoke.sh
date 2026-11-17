@@ -173,8 +173,27 @@ if [[ -n "${SOIL_CUA_DRIVER_ARCHIVE:-}" ]]; then
   cat "$driver_binary" | ssh "${ssh_opts[@]}" tc@127.0.0.1     "cat > /tmp/cua-driver && chmod 755 /tmp/cua-driver"
   ssh "${ssh_opts[@]}" tc@127.0.0.1     "getconf GNU_LIBC_VERSION; printf 'DISPLAY=%s\\n' \"\$DISPLAY\"; ldd /tmp/cua-driver || true"
   ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 /tmp/cua-driver --version"
-  # Doctor must not be mistaken for execution success; it may report warnings.
-  ssh "${ssh_opts[@]}" tc@127.0.0.1     "DISPLAY=:0 /tmp/cua-driver doctor"
-  echo "PROBE: upstream Cua Driver runs in the guest; verify desktop actions separately."
+  # Guest images must not send telemetry. Disable before starting the daemon.
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 /tmp/cua-driver telemetry disable"
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 /tmp/cua-driver doctor"
+  # Actually drive the upstream MCP-capable runtime, not just its --version.
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+    "DISPLAY=:0 nohup /tmp/cua-driver serve >/tmp/cua-driver.log 2>&1 </dev/null &"
+  sleep 3
+  if ! ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 /tmp/cua-driver status"; then
+    ssh "${ssh_opts[@]}" tc@127.0.0.1 "tail -n 70 /tmp/cua-driver.log" || true
+    echo "Cua Driver did not serve inside the guest" >&2
+    exit 1
+  fi
+  if ! ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+    "DISPLAY=:0 /tmp/cua-driver call get_desktop_state > /tmp/cua-desktop-state.json"; then
+    ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+      "tail -n 70 /tmp/cua-driver.log; head -c 1200 /tmp/cua-desktop-state.json" || true
+    echo "Cua Driver cannot observe the actual VM desktop" >&2
+    exit 1
+  fi
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+    "test -s /tmp/cua-desktop-state.json && wc -c /tmp/cua-desktop-state.json"
+  echo "PROBE: upstream Cua Driver daemon and desktop observation executed in guest."
 fi
 
