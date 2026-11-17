@@ -63,9 +63,17 @@ python3 "$repo/soil-sdk/tools/soil.py" verify "$tmp/NativeSmoke.sol"
 # busybox-static is supplied by Ubuntu in CI and is never shipped in the MSI.
 busybox_elf="$(command -v busybox)"
 [[ -f "$busybox_elf" ]] || { echo "busybox-static not installed" >&2; exit 1; }
-python3 "$repo/soil-sdk/tools/soil.py" native "$busybox_elf" \
-  --id org.soil.busybox --name "BusyBox CI" --arg=echo \
-  --arg=soil-third-party-ok -o "$tmp/BusyBox.sol"
+mkdir -p "$tmp/BusyBoxDir"
+cp "$busybox_elf" "$tmp/BusyBoxDir/busybox"
+cat > "$tmp/BusyBoxDir/AppRun" <<'EOF'
+#!/bin/sh
+# BusyBox selects its applet from argv[0], so launch it under its own name.
+exec "$APPDIR/app/busybox" echo soil-third-party-ok
+EOF
+chmod 755 "$tmp/BusyBoxDir/AppRun"
+python3 "$repo/soil-sdk/tools/soil.py" native "$tmp/BusyBoxDir" \
+  --id org.soil.busybox --name "BusyBox CI" \
+  -o "$tmp/BusyBox.sol"
 truncate -s 10G "$tmp/data.img"
 
 qemu-system-x86_64 \
