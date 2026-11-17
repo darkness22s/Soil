@@ -479,6 +479,23 @@ public sealed class AppServer : IDisposable
         });
 
 
+        m_app.MapPost("/api/vms/{id}/computer/cua/{tool}",
+            async (string id, string tool, HttpContext ctx) =>
+        {
+            if (!ComputerAuthorized(ctx.Request)) return Results.Unauthorized();
+            try
+            {
+                using var body = await JsonDocument.ParseAsync(ctx.Request.Body,
+                    cancellationToken: ctx.RequestAborted);
+                var result = await m_manager.CallGuestCuaDriverAsync(
+                    id, tool, body.RootElement, ctx.RequestAborted);
+                return Results.Json(new { tool, output = result }, JsonOptions.Web);
+            }
+            catch (JsonException) { return Results.BadRequest(new { error = "Invalid Cua Driver arguments." }); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+            catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
+        });
+
         m_app.MapGet("/api/vms/{id}/stream.mjpg", async (HttpContext ctx, string id) =>
         {
             var runtime = m_manager.FindRuntime(id);
