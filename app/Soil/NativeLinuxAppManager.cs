@@ -178,6 +178,11 @@ public sealed class NativeLinuxAppManager
         await gate.WaitAsync(ct);
         try
         {
+            // Launch is an explicit user request: recall a stopped VM and wait for
+            // its existing guest SSH transport, without any manual VM/SSH steps.
+            if (m_vms.Start(vmId) is null)
+                throw new InvalidOperationException("Could not start the selected Soil VM.");
+            await m_vms.WaitForNativeGuestReadyAsync(vmId, ct);
             await m_vms.DeployNativeLinuxAppAsync(
                 vmId, app.Id, Path.Combine(AppFolder(vmId, app.Id), "app"),
                 app.Name, launch: true, ct);
