@@ -200,7 +200,7 @@ if [[ -n "${SOIL_CUA_DRIVER_ARCHIVE:-}" ]]; then
     if [[ "$gui_ready" != 1 ]]; then
       echo "PROBE: startx not available via SSH; testing shipped framebuffer X server"
       ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-        "sudo -n sh -c 'nohup Xfbdev :0 -screen 0 1360x768x24 >/tmp/soil-xfbdev.log 2>&1 </dev/null &' " || true
+        "sudo -n sh -c 'nohup Xfbdev :0 -screen 1360x768x24 -fb /dev/fb0 >/tmp/soil-xfbdev.log 2>&1 </dev/null &' " || true
       for attempt in $(seq 1 12); do
         if ssh "${ssh_opts[@]}" tc@127.0.0.1 \
           "DISPLAY=:0 xset q >/dev/null 2>&1"; then gui_ready=1; break; fi
