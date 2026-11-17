@@ -469,15 +469,24 @@ public sealed class VmManager
                       "soil-native install " + ShellQuote(appId) + " " +
                       ShellQuote(remote) + " " + ShellQuote(displayName) +
                       "; rc=$?; rm -f " + ShellQuote(remote) + "; exit $rc";
-        if (!await RunGuestCommandAsync(port, key, install, 30, ct))
+        var installed = await RunGuestCommandDetailedAsync(port, key, install, 30, ct);
+        if (!installed.Success)
             throw new InvalidOperationException(
-                "The guest native-app launcher is unavailable or rejected the executable. " +
-                "Rebuild/install Soil with the updated bundled guest image.");
-        if (launch && !await RunGuestCommandAsync(
-                port, key, "soil-native launch " + ShellQuote(appId), 30, ct))
-            throw new InvalidOperationException(
-                "The Linux application could not start in the guest. It may need shared libraries " +
-                "not included in the compact Soil Linux image.");
+                "The app reached the VM, but Linux could not install it. " +
+                (string.IsNullOrWhiteSpace(installed.Details)
+                    ? "Verify that the bundled guest image contains soil-native."
+                    : "Guest error: " + installed.Details));
+        if (launch)
+        {
+            var started = await RunGuestCommandDetailedAsync(
+                port, key, "soil-native launch " + ShellQuote(appId), 30, ct);
+            if (!started.Success)
+                throw new InvalidOperationException(
+                    "The app was imported, but Linux could not launch it. " +
+                    (string.IsNullOrWhiteSpace(started.Details)
+                        ? "It may need Linux libraries or runtime features not included in this guest."
+                        : "Guest error: " + started.Details));
+        }
     }
 
     internal async Task RemoveNativeLinuxAppAsync(
@@ -555,7 +564,13 @@ public sealed class VmManager
         return ssh.ExitCode == 0;
     }
 
+    private sealed record GuestCommandResult(bool Success, string Details);
+
     private async Task<bool> RunGuestCommandAsync(
+        int port, string key, string remote, int timeoutSeconds, CancellationToken ct) =>
+        (await RunGuestCommandDetailedAsync(port, key, remote, timeoutSeconds, ct)).Success;
+
+    private async Task<GuestCommandResult> RunGuestCommandDetailedAsync(
         int port,
         string key,
         string remote,
@@ -587,27 +602,34 @@ public sealed class VmManager
         psi.ArgumentList.Add("tc@127.0.0.1");
         psi.ArgumentList.Add(remote);
 
-        using var ssh = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        ssh.OutputDataReceived += (_, _) => { };
-        ssh.ErrorDataReceived += (_, _) => { };
+        using var ssh = new Process { StartInfo = psi };
         ssh.Start();
-        ssh.BeginOutputReadLine();
-        ssh.BeginErrorReadLine();
-
+        // Collect both pipes concurrently so guest errors are visible instead
+        // of being silently discarded when an AppImage exits at startup.
+        var stdout = ssh.StandardOutput.ReadToEndAsync(ct);
+        var stderr = ssh.StandardError.ReadToEndAsync(ct);
         using var wait = CancellationTokenSource.CreateLinkedTokenSource(ct);
         wait.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         try
         {
             await ssh.WaitForExitAsync(wait.Token);
+            await Task.WhenAll(stdout, stderr);
         }
         catch (OperationCanceledException)
         {
             KillQuietly(ssh);
             if (ct.IsCancellationRequested)
                 throw;
-            return false;
+            return new GuestCommandResult(false,
+                "Guest command timed out after " + timeoutSeconds + " seconds.");
         }
-        return ssh.ExitCode == 0;
+        // Failed SSH/guest commands usually report the useful cause on stderr.
+        var details = stderr.Result.Trim();
+        if (string.IsNullOrWhiteSpace(details))
+            details = stdout.Result.Trim();
+        if (details.Length > 1500)
+            details = details[..1500] + "...";
+        return new GuestCommandResult(ssh.ExitCode == 0, details);
     }
 
     private static string ShellQuote(string value) =>
