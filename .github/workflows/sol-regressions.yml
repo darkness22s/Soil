@@ -47,3 +47,6 @@ jobs:
       - name: Compile Windows app
         shell: pwsh
         run: dotnet build .\app\Soil\Soil.csproj -c Release --nologo
+      - name: Reproduce and prevent Linux app import CLI errors
+        shell: pwsh
+        run: dotnet run --project .\tests\Soil.CliSmoke\Soil.CliSmoke.csproj -c Release --nologo
