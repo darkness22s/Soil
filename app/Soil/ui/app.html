@@ -951,6 +951,9 @@
   .native-entry button:disabled{opacity:.5;cursor:default}
   .native-status{font-size:12px;margin:12px 0;min-height:18px;overflow-wrap:anywhere;color:var(--muted)}
   .native-status.error{color:var(--red)}
+  .native-dropzone{border:1px dashed var(--line);border-radius:10px;padding:22px 14px;text-align:center;color:var(--muted);cursor:pointer;font-size:12px}
+  .native-dropzone:hover,.native-dropzone:focus-visible,.native-dropzone.dragging{border-color:var(--ink);color:var(--ink);background:var(--grav-2);outline-offset:2px}
+  .native-dropzone[aria-disabled=true]{opacity:.5;cursor:default}
   .native-dialog input[type=file]{display:none}
 </style>
 </head>
@@ -1160,11 +1163,12 @@
     </div>
     <button type="button" class="skill-x" id="nativeAppsClose" aria-label="Close Linux apps dialog">&times;</button>
   </div>
+  <div class="native-dropzone" id="nativeAppsDropZone" role="button" tabindex="0">Drop a Linux AppImage or ELF here, or click to choose a file</div>
   <div class="native-list" id="nativeAppsList"></div>
   <div class="native-status" id="nativeAppsStatus" role="status" aria-live="polite"></div>
   <input type="file" id="nativeAppsFile" accept=".AppImage,.appimage,.elf,.bin,.run">
   <div class="skill-actions">
-    <button type="button" id="nativeAppsImport">Import ELF / AppImage</button>
+    <button type="button" id="nativeAppsImport">Import &amp; Launch</button>
     <button type="button" id="nativeAppsDone" class="skill-done">Done</button>
   </div>
 </dialog>
