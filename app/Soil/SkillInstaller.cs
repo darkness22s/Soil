@@ -52,7 +52,7 @@ internal static class SkillInstaller
                         results.Add(new SkillInstallResult(candidate.Name,
                             "already_installed", destination, null));
                     }
-                    else if (existing.StartsWith("---\\nname: soil-control\\n", StringComparison.Ordinal)
+                    else if (existing.StartsWith("---\nname: soil-control\n", StringComparison.Ordinal)
                              && existing.Contains("# Soil VM control", StringComparison.Ordinal))
                     {
                         // Preserve local edits before upgrading earlier Soil skill versions.
