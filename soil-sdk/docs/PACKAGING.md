@@ -56,6 +56,25 @@ Trusting a key inside Soil:
 soil trust soil-sign.pub.pem           # copies to ~/.config/soil/trust/
 ```
 
+## Package an existing native Linux app
+
+```sh
+python tools/soil.py native /path/to/Program.AppImage --id org.example.program -o Program.sol
+python tools/soil.py native ./MyAppDir --entry AppRun --icon ./app.png --name "My App" -o MyApp.sol
+python tools/soil.py verify MyApp.sol
+```
+
+This produces a **native-only** `.sol` (not a webapp). The app directory is
+copied into `app/` and launched from the manifest `entry`. An `AppRun`
+script can locate its bundled resources through `APPDIR` and store writable
+data in `SOIL_DATA`. A single ELF/AppImage is copied as `app/run`.
+
+The build tool checks for an x86_64 Linux ELF or shebang launcher, generates a
+PNG icon if needed, and rejects symlinks and foreign-architecture executables.
+Do **not** rename a `.deb` or `.rpm` to `.sol`; these are different formats.
+See [Native applications](NATIVE-APPS.md) for dependency limitations and
+in-guest tests.
+
 ## App directory layout
 
 ```
