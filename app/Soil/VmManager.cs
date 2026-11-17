@@ -424,8 +424,6 @@ public sealed class VmManager
     internal async Task WaitForNativeGuestReadyAsync(string machineId, CancellationToken ct)
     {
         var deadline = DateTime.UtcNow.AddSeconds(90);
-        var fallbackAttempted = false;
-        var sshReadyAt = DateTime.MinValue;
         while (DateTime.UtcNow < deadline)
         {
             ct.ThrowIfCancellationRequested();
@@ -435,44 +433,13 @@ public sealed class VmManager
                     "The Soil VM stopped before its Linux desktop was ready.");
 
             var endpoint = GetSshEndpoint(machineId);
-            if (endpoint is { } ssh)
-            {
-                // A live SSH tunnel is NOT proof of X11 readiness. Wait for the
-                // real desktop before launching Linux GUI applications.
-                if (await RunGuestCommandAsync(
-                        ssh.Port, ssh.Key, "DISPLAY=:0 xset q >/dev/null 2>&1", 5, ct))
-                {
-                    if (fallbackAttempted)
-                        // Bring up the shipped window manager on the virtual
-                        // display; it is observable through native Cua Driver.
-                        await RunGuestCommandAsync(ssh.Port, ssh.Key,
-                            "(DISPLAY=:0 nohup fluxbox >/tmp/soil-fluxbox.log 2>&1 " +
-                            "</dev/null &)", 5, ct);
-                    return;
-                }
-
-                if (await RunGuestCommandAsync(ssh.Port, ssh.Key, "true", 5, ct))
-                {
-                    if (sshReadyAt == DateTime.MinValue)
-                        sshReadyAt = DateTime.UtcNow;
-                    // On Soil's direct-kernel guest /dev/fb0 is not always
-                    // operational. Avoid claiming the app launched into a dead
-                    // GUI: recover with the shipped offscreen Xvfb server,
-                    // which native Cua Driver can observe through its own API.
-                    if (!fallbackAttempted &&
-                        DateTime.UtcNow - sshReadyAt >= TimeSpan.FromSeconds(12))
-                    {
-                        fallbackAttempted = true;
-                        await RunGuestCommandAsync(ssh.Port, ssh.Key,
-                            "command -v Xvfb >/dev/null 2>&1 && " +
-                            "(nohup Xvfb :0 -screen 0 1360x768x24 -nolisten tcp " +
-                            ">/tmp/soil-xvfb.log 2>&1 </dev/null &)", 8, ct);
-                    }
-                }
-            }
+            if (endpoint is { } ssh &&
+                // A live SSH tunnel is not proof that a desktop exists.
+                await RunGuestCommandAsync(
+                    ssh.Port, ssh.Key, "DISPLAY=:0 xset q >/dev/null 2>&1", 5, ct))
+                return;
             await Task.Delay(1000, ct);
         }
-
         throw new InvalidOperationException(
             "The Soil Linux graphical desktop (X11 display :0) did not become ready " +
             "within 90 seconds. The VM or SSH may have started without a usable " +
