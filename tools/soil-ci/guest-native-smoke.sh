@@ -28,11 +28,36 @@ done
 # Build the exact static SDK runtime that Windows installer CI embeds.
 bash "$repo/tools/soil-ci/build-guest-cli.sh" "$tmp/soil"
 ssh-keygen -q -t ed25519 -N "" -f "$tmp/guest" -C soil-guest-smoke
+
+# Test the SAME in-guest preloading that the Windows installer ships, not
+# an ephemeral copy over SSH. Only the dedicated Cua test supplies these.
+cua_guest_args=()
+if [[ -n "${SOIL_CUA_DRIVER_ARCHIVE:-}" ]]; then
+  mkdir -p "$tmp/cua-release"
+  tar -xzf "$SOIL_CUA_DRIVER_ARCHIVE" -C "$tmp/cua-release"
+  driver_binary="$(find "$tmp/cua-release" -name cua-driver -type f -print -quit)"
+  [[ -n "$driver_binary" && -s "$driver_binary" ]] || {
+    echo "Pinned Cua release does not contain the Linux driver" >&2; exit 1;
+  }
+  [[ -s "${SOIL_CUA_DUMMY_MODULE:-}" && -s "${SOIL_CUA_DUMMY_LICENSE:-}" ]] || {
+    echo "Real guest Cua test requires a signed Xorg dummy binary and license" >&2; exit 1;
+  }
+  cua_guest_args=(
+    --cua-driver "$driver_binary"
+    --cua-license "$repo/app/Soil/third-party/cua-driver-LICENSE.md"
+    --xorg-dummy "$SOIL_CUA_DUMMY_MODULE"
+    --xorg-license "$SOIL_CUA_DUMMY_LICENSE"
+    --xorg-config "$repo/tools/soil-ci/xorg-dummy.conf"
+    --desktop-ensure "$repo/tools/soil-ci/soil-ensure-desktop.sh"
+  )
+fi
 python3 "$repo/tools/soil-ci/inject-native-guest.py" \
   "$images/core2.gz" "$tmp/core2-native.gz" \
-  --launcher "$repo/soil-sdk/runtime/soil-native" --runtime "$tmp/soil"
+  --launcher "$repo/soil-sdk/runtime/soil-native" --runtime "$tmp/soil" \
+  "${cua_guest_args[@]}"
 python3 "$repo/tools/soil-ci/inject-native-guest.py" \
-  "$tmp/core2-native.gz" "$tmp/core2-native.gz" --runtime "$tmp/soil" --verify
+  "$tmp/core2-native.gz" "$tmp/core2-native.gz" --runtime "$tmp/soil" \
+  "${cua_guest_args[@]}" --verify
 dotnet run --project "$repo/tools/soil-ci/GuestInitrdSmoke/GuestInitrdSmoke.csproj" -- \
   --prepare "$tmp/core2-native.gz" "$tmp/machine" "$tmp/guest.pub"
 initrd="$tmp/machine/boot/core2-ssh.gz"
@@ -164,79 +189,33 @@ ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/soil run /tmp/BusyBox.sol | grep -x soil
 echo "PASS: real bundled Soil guest boot; raw ELF, native .sol lifecycle, and third-party BusyBox binary."
 
 if [[ -n "${SOIL_CUA_DRIVER_ARCHIVE:-}" ]]; then
-  echo "PROBE: verified upstream Cua Driver inside the actual Soil Linux VM"
-  mkdir -p "$tmp/cua-driver"
-  tar -xzf "$SOIL_CUA_DRIVER_ARCHIVE" -C "$tmp/cua-driver"
-  driver_binary="$(find "$tmp/cua-driver" -type f -name cua-driver -print -quit)"
-  [[ -n "$driver_binary" ]] || { echo "Upstream Cua release has no driver binary" >&2; exit 1; }
-  file "$driver_binary" || true
-  cat "$driver_binary" | ssh "${ssh_opts[@]}" tc@127.0.0.1     "cat > /tmp/cua-driver && chmod 755 /tmp/cua-driver"
-  ssh "${ssh_opts[@]}" tc@127.0.0.1     "getconf GNU_LIBC_VERSION; printf 'DISPLAY=%s\\n' \"\$DISPLAY\"; ldd /tmp/cua-driver || true"
-  ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 /tmp/cua-driver --version"
-  # Guest images must not send telemetry. Disable before starting the daemon.
-  ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 /tmp/cua-driver telemetry disable"
-  ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 /tmp/cua-driver doctor"
-  echo "PROBE: kernel framebuffer, X modules, and available alternative servers"
+  echo "PROBE: actual preloaded upstream Cua Driver and tested Xorg dummy"
   ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-    "cat /proc/fb 2>&1 || true; cat /proc/cmdline; ls -la /sys/class/graphics /dev/fb* 2>&1 || true; \
-     cat /proc/modules | grep -E 'fb|drm|video' || true; \
-     find /usr/local/lib/xorg/modules -type f -name '*drv.so' 2>/dev/null || true; \
-     for bin in Xvnc Xtigervnc Xorg Xfbdev Xvfb Xephyr Xwayland modprobe; do \
-       command -v \$bin || true; done; \
-     ls /lib/modules/\$(uname -r)/kernel/drivers/video/fbdev 2>&1 || true" || true
-  echo "PROBE: actual guest desktop/server diagnostics"
+    "test -x /bin/cua-driver && test -x /bin/soil-ensure-desktop && \
+     test -f /opt/soil/xorg/drivers/dummy_drv.so && \
+     test -s /usr/share/doc/cua-driver/LICENSE.md && \
+     test -s /usr/share/doc/xf86-video-dummy/copyright"
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/cua-driver --version"
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/cua-driver telemetry disable"
+  # Before patching the guest this was consistently broken: /proc/fb was empty,
+  # /dev/fb0 had no driver, and Xvfb crashed. The bundled Xorg dummy now
+  # supplies the real guest desktop without needing any extra kernel module.
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/soil-ensure-desktop"
   ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-    "ps w; ls -la /tmp/.X11-unix /tmp/.X0-lock /dev/fb0 2>&1 || true; \
-     for bin in Xorg Xvesa Xfbdev Xvfb startx xinit dbus-daemon; do \
-       command -v \$bin || true; done; \
-     ls /usr/local/etc/X11 /home/tc/.xsession /home/tc/.xinitrc 2>&1 || true" || true
-  # The kernel has no fb0 driver, so try the Xorg dummy video backend.
-  # Keep this CI-only until the driver ABI and screenshot tests pass.
-  if ! ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 xset q >/dev/null 2>&1"; then
-    [[ -n "${SOIL_CUA_DUMMY_MODULE:-}" ]] || {
-      echo "No Xorg dummy module provided for compatibility probe" >&2; exit 1;
-    }
-    echo "PROBE: testing native Xorg virtual video backend"
-    cat "$SOIL_CUA_DUMMY_MODULE" | ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-      "mkdir -p /tmp/soil-xorg-modules/drivers && cat > /tmp/soil-xorg-modules/drivers/dummy_drv.so"
-    cat "$repo/tools/soil-ci/xorg-dummy.conf" | ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-      "cat > /tmp/soil-dummy.conf"
-    ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-      "sudo -n sh -c 'nohup Xorg :0 -config /tmp/soil-dummy.conf \
-       -modulepath /tmp/soil-xorg-modules,/usr/local/lib/xorg/modules \
-       -noreset -nolisten tcp -ac -logfile /tmp/soil-xorg.log -novtswitch \
-       >/tmp/soil-xorg-stdout.log 2>&1 </dev/null &' " || true
-    gui_ready=0
-    for attempt in $(seq 1 18); do
-      if ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-        "DISPLAY=:0 xset q >/dev/null 2>&1"; then gui_ready=1; break; fi
-      sleep 1
-    done
-    if [[ "$gui_ready" != 1 ]]; then
-      ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-        "tail -n 100 /tmp/soil-xorg.log /tmp/soil-xorg-stdout.log; \
-         ls -l /tmp/.X11-unix; ps w | grep Xorg || true" || true
-      echo "The virtual Xorg desktop did not start" >&2
-      exit 1
-    fi
-    ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-      "DISPLAY=:0 nohup fluxbox >/tmp/soil-fluxbox.log 2>&1 </dev/null &" || true
-    ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-      "DISPLAY=:0 nohup pcmanfm --desktop >/tmp/soil-pcmanfm.log 2>&1 </dev/null &" || true
-  fi
+    "DISPLAY=:0 xset q >/dev/null 2>&1 && ps w | grep -q '[f]luxbox'"
   echo "PROBE: X11 server is reachable on DISPLAY=:0"
   # Start Cua only after X is usable. The daemon initializes its capture
   # backend at startup and does not necessarily recover from a missing X socket.
   ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-    "DISPLAY=:0 nohup /tmp/cua-driver serve >/tmp/cua-driver.log 2>&1 </dev/null &"
+    "DISPLAY=:0 nohup /bin/cua-driver serve >/tmp/cua-driver.log 2>&1 </dev/null &"
   sleep 3
-  if ! ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 /tmp/cua-driver status"; then
+  if ! ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 /bin/cua-driver status"; then
     ssh "${ssh_opts[@]}" tc@127.0.0.1 "tail -n 70 /tmp/cua-driver.log" || true
     echo "Cua Driver did not serve inside the guest" >&2
     exit 1
   fi
   if ! ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-    "DISPLAY=:0 /tmp/cua-driver call get_desktop_state > /tmp/cua-desktop-state.json"; then
+    "DISPLAY=:0 /bin/cua-driver call get_desktop_state > /tmp/cua-desktop-state.json"; then
     ssh "${ssh_opts[@]}" tc@127.0.0.1 \
       "tail -n 70 /tmp/cua-driver.log; head -c 1200 /tmp/cua-desktop-state.json" || true
     echo "Cua Driver cannot observe the actual VM desktop" >&2
