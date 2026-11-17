@@ -6,6 +6,7 @@
   var status = document.getElementById("nativeAppsStatus");
   var importButton = document.getElementById("nativeAppsImport");
   var fileInput = document.getElementById("nativeAppsFile");
+  var dropZone = document.getElementById("nativeAppsDropZone");
   var vm = null;
   var busy = false;
   if (!openButton || !dialog || !list || !fileInput) return;
@@ -31,6 +32,7 @@
   function setBusy(on) {
     busy = !!on;
     importButton.disabled = busy;
+    if (dropZone) dropZone.setAttribute("aria-disabled", String(busy));
     Array.prototype.forEach.call(list.querySelectorAll("button"), function (b) {
       b.disabled = busy;
     });
@@ -55,14 +57,14 @@
       var launch = document.createElement("button");
       launch.type = "button";
       launch.textContent = "Launch";
-      launch.disabled = busy || vm.status !== "running";
-      launch.title = vm.status === "running" ? "Launch inside this Linux VM" : "Start this VM first";
+      launch.disabled = busy;
+      launch.title = "Start the VM if necessary, then launch this app inside Linux";
       launch.addEventListener("click", function () {
         if (busy) return;
         setBusy(true);
-        message("Installing and starting " + app.name + " inside the Linux VM...");
+        message("Preparing the Linux VM and launching " + app.name + "...");
         request(url("/" + encodeURIComponent(app.id) + "/launch"), {method:"POST"})
-          .then(function () { message("Launched " + app.name + " in the VM. Check its screen."); })
+          .then(function () { vm.status = "running"; message("Launch requested for " + app.name + ". Check the VM screen."); return refresh(); })
           .catch(function (err) { message(err.message, true); })
           .then(function () { setBusy(false); });
       });
@@ -104,8 +106,8 @@
       vm = selected;
       document.getElementById("nativeAppsTitle").textContent = "Linux apps · " + vm.name;
       message(vm.status === "running" ?
-        "The VM is running. Imported apps launch inside its Linux desktop." :
-        "Import is available while the VM is off. Start it before launching the app.");
+        "Choose a Linux app file to import and launch in this VM." :
+        "Choose a Linux app file. Soil will import it, start this VM, and launch it.");
       dialog.showModal();
       return refresh();
     }).catch(function (err) {
@@ -119,16 +121,45 @@
   importButton.addEventListener("click", function () {
     if (!busy && vm) fileInput.click();
   });
+  if (dropZone) {
+    dropZone.addEventListener("click", function () {
+      if (!busy && vm) fileInput.click();
+    });
+    dropZone.addEventListener("keydown", function (event) {
+      if (!busy && (event.key === "Enter" || event.key === " ")) {
+        event.preventDefault();
+        fileInput.click();
+      }
+    });
+    dropZone.addEventListener("dragover", function (event) {
+      event.preventDefault();
+      if (!busy) dropZone.classList.add("dragging");
+    });
+    dropZone.addEventListener("dragleave", function () {
+      dropZone.classList.remove("dragging");
+    });
+    dropZone.addEventListener("drop", function (event) {
+      event.preventDefault();
+      dropZone.classList.remove("dragging");
+      if (!busy && event.dataTransfer && event.dataTransfer.files.length === 1)
+        installFile(event.dataTransfer.files[0]);
+      else if (event.dataTransfer && event.dataTransfer.files.length > 1)
+        message("Drop one Linux app at a time.", true);
+    });
+  }
   fileInput.addEventListener("change", function () {
     var file = fileInput.files && fileInput.files[0];
     fileInput.value = "";
+    installFile(file);
+  });
+  function installFile(file) {
     if (!file || !vm || busy) return;
     if (file.size < 64 || file.size > 256 * 1024 * 1024) {
-      message("Choose a Linux ELF or AppImage between 64 bytes and 256 MiB.", true);
+      message("Choose an x86-64 Linux ELF or Type 2 AppImage between 64 bytes and 256 MiB (.deb and .rpm are not supported).", true);
       return;
     }
-    if (!confirm("Import '" + file.name +
-        "' into Soil VM '" + vm.name + "'?\nOnly import executables you trust. They run with normal guest-user permissions.")) return;
+    if (!confirm("Import and run '" + file.name +
+        "' inside Soil VM '" + vm.name + "'?\nSoil will start this VM if it is off. Only run apps you trust.")) return;
 
     setBusy(true);
     message("Uploading " + file.name + " into Soil's per-VM storage...");
@@ -147,18 +178,21 @@
         setBusy(false);
         return;
       }
-      refresh().then(function () {
-        if (vm.status !== "running") {
-          message("Saved " + app.name + ". Start this VM, then choose Launch.");
-          return;
-        }
-        message("Launching " + app.name + " in the running Linux VM...");
-        return request(url("/" + encodeURIComponent(app.id) + "/launch"), {method:"POST"})
-          .then(function () { message("Launched " + app.name + " in the VM."); });
-      }).catch(function (err) { message(err.message, true); })
+      message("Imported " + app.name + ". Starting the VM if necessary and launching...");
+      request(url("/" + encodeURIComponent(app.id) + "/launch"), {method:"POST"})
+        .then(function () {
+          vm.status = "running";
+          message("Launch requested for " + app.name + ". Check the VM screen.");
+        })
+        .catch(function (err) {
+          message("Imported " + app.name + ", but launch failed: " + err.message +
+            " You can retry with Launch below.", true);
+        })
+        .then(function () { return refresh(); })
+        .catch(function (err) { message(err.message, true); })
         .then(function () { setBusy(false); });
     };
     xhr.onerror = function () { message("Could not upload the Linux app.", true); setBusy(false); };
     xhr.send(file);
-  });
+  }
 }());
