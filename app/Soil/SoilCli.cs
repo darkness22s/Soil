@@ -35,6 +35,10 @@ internal static class SoilCli
 
     private static int RunWithoutConsole(string[] args, SoilPaths paths)
     {
+        // GUI-subsystem executables do not automatically attach a console.
+        // CLI/MCP callers frequently use inherited anonymous stdio pipes.
+        Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
+        Console.SetError(new StreamWriter(Console.OpenStandardError()) { AutoFlush = true });
         return RunCommandLine(args, paths);
     }
 
