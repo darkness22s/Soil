@@ -45,11 +45,29 @@ internal static class SkillInstaller
                 Directory.CreateDirectory(candidate.Directory);
                 if (File.Exists(destination))
                 {
-                    var sameSkill = File.ReadAllText(destination).Equals(
-                        File.ReadAllText(skillSource), StringComparison.Ordinal);
-                    results.Add(new SkillInstallResult(candidate.Name,
-                        sameSkill ? "already_installed" : "conflict", destination,
-                        sameSkill ? null : "An existing skill was left unchanged."));
+                    var existing = File.ReadAllText(destination);
+                    var current = File.ReadAllText(skillSource);
+                    if (string.Equals(existing, current, StringComparison.Ordinal))
+                    {
+                        results.Add(new SkillInstallResult(candidate.Name,
+                            "already_installed", destination, null));
+                    }
+                    else if (existing.StartsWith("---\nname: soil-control\n", StringComparison.Ordinal)
+                             && existing.Contains("# Soil VM control", StringComparison.Ordinal))
+                    {
+                        // Preserve local edits before upgrading earlier Soil skill versions.
+                        var backup = destination + ".backup-" +
+                            DateTime.UtcNow.ToString("yyyyMMddHHmmssfff");
+                        File.Copy(destination, backup, overwrite: false);
+                        File.Copy(skillSource, destination, overwrite: true);
+                        results.Add(new SkillInstallResult(candidate.Name,
+                            "updated", destination, "Previous instructions backed up to " + backup));
+                    }
+                    else
+                    {
+                        results.Add(new SkillInstallResult(candidate.Name,
+                            "conflict", destination, "A non-Soil skill was left unchanged."));
+                    }
                     continue;
                 }
 

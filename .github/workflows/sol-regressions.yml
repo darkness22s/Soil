@@ -32,6 +32,10 @@ jobs:
           node --check app/Soil/ui/github-ui.js
       - name: VM lifecycle and GitHub UI regression tests
         run: node --test tests/sol-regressions.test.cjs
+      - name: Linux app import and skill UI tests
+        run: |
+          node --check app/Soil/ui/native-ui.js
+          node --test tools/soil-ci/native-ui.test.mjs tools/soil-ci/skill-ui.test.mjs
 
   windows-compile:
     runs-on: windows-latest
@@ -43,3 +47,9 @@ jobs:
       - name: Compile Windows app
         shell: pwsh
         run: dotnet build .\app\Soil\Soil.csproj -c Release --nologo
+      - name: Reproduce and prevent Linux app import CLI errors
+        shell: pwsh
+        run: dotnet run --project .\tests\Soil.CliSmoke\Soil.CliSmoke.csproj -c Release --nologo
+      - name: Exercise Soil VM computer-use transport
+        shell: pwsh
+        run: dotnet run --project .\tests\Soil.ComputerSmoke\Soil.ComputerSmoke.csproj -c Release --nologo

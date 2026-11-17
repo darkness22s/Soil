@@ -418,6 +418,136 @@ public sealed class VmManager
             "Could not install and launch the app package in the machine.");
     }
 
+    // Used only after the user explicitly chooses to launch an imported app.
+    // Starting a VM is asynchronous, and an allocated SSH port does not mean the
+    // minimal guest has finished booting yet.
+    internal async Task WaitForNativeGuestReadyAsync(string machineId, CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(90);
+        var sshReadyAt = DateTime.MinValue;
+        var attemptedRecovery = false;
+        string? recoveryError = null;
+        while (DateTime.UtcNow < deadline)
+        {
+            ct.ThrowIfCancellationRequested();
+            var state = Get(machineId);
+            if (state is null || state.Status is "stopped" or "failed")
+                throw new InvalidOperationException(
+                    "The Soil VM stopped before its Linux desktop was ready.");
+
+            var endpoint = GetSshEndpoint(machineId);
+            if (endpoint is { } ssh)
+            {
+                // SSH is not enough: the real desktop must accept X11 requests.
+                if (await RunGuestCommandAsync(
+                    ssh.Port, ssh.Key, "DISPLAY=:0 xset q >/dev/null 2>&1", 5, ct))
+                    return;
+                if (sshReadyAt == DateTime.MinValue &&
+                    await RunGuestCommandAsync(ssh.Port, ssh.Key, "true", 4, ct))
+                    sshReadyAt = DateTime.UtcNow;
+                // Give normal graphics startup a chance, then recover through
+                // the tested, preloaded Xorg dummy backend exactly once.
+                if (!attemptedRecovery && sshReadyAt != DateTime.MinValue &&
+                    DateTime.UtcNow - sshReadyAt >= TimeSpan.FromSeconds(5))
+                {
+                    attemptedRecovery = true;
+                    var recovered = await RunGuestCommandDetailedAsync(
+                        ssh.Port, ssh.Key,
+                        "test -x /bin/soil-ensure-desktop && /bin/soil-ensure-desktop",
+                        38, ct);
+                    if (recovered.Success && await RunGuestCommandAsync(
+                        ssh.Port, ssh.Key, "DISPLAY=:0 xset q >/dev/null 2>&1", 5, ct))
+                        return;
+                    recoveryError = recovered.Details;
+                }
+            }
+            await Task.Delay(1000, ct);
+        }
+        throw new InvalidOperationException(
+            "The Soil Linux graphical desktop (X11 display :0) did not become ready " +
+            "within 90 seconds. The VM's Xorg software desktop could not start. " +
+            "Check guest /tmp/soil-xorg.log and retry the saved app rather than " +
+            "uploading it again. " + recoveryError);
+    }
+
+    // Authenticated host-to-guest adapter for the genuine bundled open-source
+    // Cua Driver CLI. The agent never receives the VM SSH private key or a
+    // guest-accessible network port.
+    internal async Task<string> CallGuestCuaDriverAsync(
+        string machineId, string tool, JsonElement args, CancellationToken ct)
+    {
+        if (args.ValueKind != JsonValueKind.Object)
+            throw new ArgumentException("Cua Driver tool arguments must be a JSON object.");
+        // Metadata works even when the guest's graphics stack is broken.
+        // Only allow known upstream computer tools; do not expose a generic
+        // guest shell/CLI execution escape through this host API.
+        var metadata = tool is "list_tools" or "describe" or "doctor";
+        if (!new[]
+            {
+                "list_tools", "describe", "doctor",
+                "get_desktop_state", "get_window_state", "get_screen_size",
+                "get_cursor_position", "list_apps", "list_windows",
+                "launch_app", "activate_app", "click", "right_click",
+                "double_click", "move_cursor", "scroll", "drag", "type_text",
+                "press_key", "hotkey", "set_value", "zoom"
+            }.Contains(tool, StringComparer.Ordinal))
+            throw new ArgumentException("Unsupported Cua Driver tool: " + tool);
+
+        if (metadata)
+        {
+            var vm = Get(machineId);
+            if (vm is null || vm.Status != "running")
+                throw new InvalidOperationException(
+                    "The selected VM must be running to inspect its bundled Cua Driver.");
+        }
+        else
+            await WaitForNativeGuestReadyAsync(machineId, ct);
+        var endpoint = GetSshEndpoint(machineId)
+            ?? throw new InvalidOperationException("Selected VM has no live guest SSH tunnel.");
+        var (_, key, port) = endpoint;
+        // Disable upstream default telemetry even for metadata-only calls.
+        var setup = "command -v cua-driver >/dev/null 2>&1 && " +
+                    "cua-driver telemetry disable >/dev/null 2>&1";
+        if (!metadata)
+            setup += " && (cua-driver status >/dev/null 2>&1 || " +
+                     "(DISPLAY=:0 nohup cua-driver serve " +
+                     ">/tmp/soil-cua-driver.log 2>&1 </dev/null & " +
+                     "i=0; while [ $i -lt 24 ]; do " +
+                     "cua-driver status >/dev/null 2>&1 && exit 0; " +
+                     "sleep 1; i=$((i+1)); done; " +
+                     "tail -n 20 /tmp/soil-cua-driver.log >&2; exit 1))";
+        var ready = await RunGuestCommandDetailedAsync(port, key, setup, 37, ct);
+        if (!ready.Success)
+            throw new InvalidOperationException(
+                "The preloaded Cua Driver is missing or its daemon could not start. " +
+                "Verify the VM graphical desktop, bundled core2.gz and driver log. " +
+                ready.Details);
+        string command;
+        if (tool == "list_tools")
+            command = "cua-driver list-tools";
+        else if (tool == "doctor")
+            command = "DISPLAY=:0 cua-driver doctor";
+        else if (tool == "describe")
+        {
+            if (!args.TryGetProperty("name", out var nameElement) ||
+                nameElement.ValueKind != JsonValueKind.String)
+                throw new ArgumentException("describe requires a tool name.");
+            var toolName = nameElement.GetString()!;
+            if (toolName.Length is < 1 or > 60 ||
+                !toolName.All(ch => char.IsAsciiLetterOrDigit(ch) || ch == '_'))
+                throw new ArgumentException("Invalid Cua Driver tool name.");
+            command = "cua-driver describe " + ShellQuote(toolName);
+        }
+        else
+            command = "DISPLAY=:0 cua-driver call " + ShellQuote(tool) +
+                      " " + ShellQuote(args.GetRawText());
+        var result = await RunGuestCommandDetailedAsync(port, key, command, 50, ct);
+        if (!result.Success)
+            throw new InvalidOperationException(
+                "Upstream Cua Driver call failed: " + result.Details);
+        return result.Details;
+    }
+
     internal async Task DeployNativeLinuxAppAsync(
         string machineId, string appId, string filePath, string displayName,
         bool launch, CancellationToken ct)
@@ -440,15 +570,24 @@ public sealed class VmManager
                       "soil-native install " + ShellQuote(appId) + " " +
                       ShellQuote(remote) + " " + ShellQuote(displayName) +
                       "; rc=$?; rm -f " + ShellQuote(remote) + "; exit $rc";
-        if (!await RunGuestCommandAsync(port, key, install, 30, ct))
+        var installed = await RunGuestCommandDetailedAsync(port, key, install, 30, ct);
+        if (!installed.Success)
             throw new InvalidOperationException(
-                "The guest native-app launcher is unavailable or rejected the executable. " +
-                "Rebuild/install Soil with the updated bundled guest image.");
-        if (launch && !await RunGuestCommandAsync(
-                port, key, "soil-native launch " + ShellQuote(appId), 30, ct))
-            throw new InvalidOperationException(
-                "The Linux application could not start in the guest. It may need shared libraries " +
-                "not included in the compact Soil Linux image.");
+                "The app reached the VM, but Linux could not install it. " +
+                (string.IsNullOrWhiteSpace(installed.Details)
+                    ? "Verify that the bundled guest image contains soil-native."
+                    : "Guest error: " + installed.Details));
+        if (launch)
+        {
+            var started = await RunGuestCommandDetailedAsync(
+                port, key, "soil-native launch " + ShellQuote(appId), 30, ct);
+            if (!started.Success)
+                throw new InvalidOperationException(
+                    "The app was imported, but Linux could not launch it. " +
+                    (string.IsNullOrWhiteSpace(started.Details)
+                        ? "It may need Linux libraries or runtime features not included in this guest."
+                        : "Guest error: " + started.Details));
+        }
     }
 
     internal async Task RemoveNativeLinuxAppAsync(
@@ -526,7 +665,13 @@ public sealed class VmManager
         return ssh.ExitCode == 0;
     }
 
+    private sealed record GuestCommandResult(bool Success, string Details);
+
     private async Task<bool> RunGuestCommandAsync(
+        int port, string key, string remote, int timeoutSeconds, CancellationToken ct) =>
+        (await RunGuestCommandDetailedAsync(port, key, remote, timeoutSeconds, ct)).Success;
+
+    private async Task<GuestCommandResult> RunGuestCommandDetailedAsync(
         int port,
         string key,
         string remote,
@@ -558,27 +703,42 @@ public sealed class VmManager
         psi.ArgumentList.Add("tc@127.0.0.1");
         psi.ArgumentList.Add(remote);
 
-        using var ssh = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        ssh.OutputDataReceived += (_, _) => { };
-        ssh.ErrorDataReceived += (_, _) => { };
+        using var ssh = new Process { StartInfo = psi };
         ssh.Start();
-        ssh.BeginOutputReadLine();
-        ssh.BeginErrorReadLine();
-
+        // Collect both pipes concurrently so guest errors are visible instead
+        // of being silently discarded when an AppImage exits at startup.
+        var stdout = ssh.StandardOutput.ReadToEndAsync(ct);
+        var stderr = ssh.StandardError.ReadToEndAsync(ct);
         using var wait = CancellationTokenSource.CreateLinkedTokenSource(ct);
         wait.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         try
         {
             await ssh.WaitForExitAsync(wait.Token);
+            await Task.WhenAll(stdout, stderr);
         }
         catch (OperationCanceledException)
         {
             KillQuietly(ssh);
             if (ct.IsCancellationRequested)
                 throw;
-            return false;
+            return new GuestCommandResult(false,
+                "Guest command timed out after " + timeoutSeconds + " seconds.");
         }
-        return ssh.ExitCode == 0;
+        // Failed SSH/guest commands usually report the useful cause on stderr.
+        // For successful upstream Cua queries, preserve the full structured
+        // tool response (which may contain base64 image data). On failure,
+        // prefer bounded stderr diagnostics rather than hiding the real cause.
+        var success = ssh.ExitCode == 0;
+        var details = success ? stdout.Result.Trim() : stderr.Result.Trim();
+        if (string.IsNullOrWhiteSpace(details))
+            details = success ? stderr.Result.Trim() : stdout.Result.Trim();
+        if (details.Length > (success ? 12_000_000 : 1500))
+        {
+            if (success)
+                throw new InvalidOperationException("Cua Driver response exceeds 12 MB.");
+            details = details[..1500] + "...";
+        }
+        return new GuestCommandResult(success, details);
     }
 
     private static string ShellQuote(string value) =>
@@ -1673,6 +1833,8 @@ public sealed class VmManager
             (port <= 0 || string.IsNullOrWhiteSpace(key) || !File.Exists(key)))
         {
             var boot = Stopwatch.StartNew();
+            var recoveryAttempted = false;
+            string? recoveryError = null;
             while (boot.Elapsed < TimeSpan.FromSeconds(90))
             {
                 ct.ThrowIfCancellationRequested();
@@ -1680,15 +1842,42 @@ public sealed class VmManager
                     return;
                 if (HasVisibleContent(bootView))
                     return;
-                await Task.Delay(50, ct);
+                // If no guest framebuffer is registered, the original GUI
+                // cannot draw into Soil's host display. The tested Xorg dummy
+                // backend still gives Cua Driver and native apps a full X11
+                // desktop. Never mark the VM running based on SSH alone.
+                if (port > 0 && File.Exists(key) &&
+                    boot.Elapsed > TimeSpan.FromSeconds(8))
+                {
+                    if (await RunGuestCommandAsync(
+                        port, key, "DISPLAY=:0 xset q >/dev/null 2>&1", 3, ct))
+                        return;
+                    if (!recoveryAttempted &&
+                        await RunGuestCommandAsync(port, key, "true", 3, ct))
+                    {
+                        recoveryAttempted = true;
+                        var result = await RunGuestCommandDetailedAsync(
+                            port, key,
+                            "test -x /bin/soil-ensure-desktop && /bin/soil-ensure-desktop",
+                            38, ct);
+                        if (result.Success && await RunGuestCommandAsync(
+                            port, key, "DISPLAY=:0 xset q >/dev/null 2>&1", 5, ct))
+                            return;
+                        recoveryError = result.Details;
+                    }
+                }
+                await Task.Delay(200, ct);
             }
-            throw new TimeoutException("The guest did not draw a desktop frame.");
+            throw new TimeoutException(
+                "The guest did not draw a desktop frame or provide a working X11 " +
+                "software display. Check /tmp/soil-xorg.log. " + recoveryError);
         }
 
         const string probe =
             "DISPLAY=:0 xset q >/dev/null 2>&1 && " +
             "ps w | grep -q '[p]cmanfm' && ps w | grep -q '[f]luxbox'";
         var ready = Stopwatch.StartNew();
+        var recoveryAttemptedForAgent = false;
         while (ready.Elapsed < TimeSpan.FromSeconds(150))
         {
             ct.ThrowIfCancellationRequested();
@@ -1700,9 +1889,19 @@ public sealed class VmManager
                 if (await RunGuestCommandAsync(port, key, probe, 8, ct))
                     return;
             }
+            if (!recoveryAttemptedForAgent &&
+                ready.Elapsed >= TimeSpan.FromSeconds(8) &&
+                await RunGuestCommandAsync(port, key, "true", 4, ct))
+            {
+                recoveryAttemptedForAgent = true;
+                await RunGuestCommandAsync(port, key,
+                    "test -x /bin/soil-ensure-desktop && /bin/soil-ensure-desktop", 38, ct);
+            }
             await Task.Delay(1000, ct);
         }
-        throw new TimeoutException("The desktop did not finish starting.");
+        throw new TimeoutException(
+            "The Linux desktop did not finish starting, including the Xorg " +
+            "software fallback. Check the guest /tmp/soil-xorg.log.");
     }
 
     private static bool HasVisibleContent(MemoryMappedViewAccessor view)

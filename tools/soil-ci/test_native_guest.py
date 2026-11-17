@@ -74,6 +74,78 @@ class ImageInjectionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "x86_64"):
                 injector.validate_runtime(elf)
 
+    def test_genuine_cua_driver_slot_in_guest_initramfs(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source, target, driver, license_file = (
+                root / "source.gz", root / "target.gz",
+                root / "cua-driver", root / "LICENSE.md")
+            archive = (
+                injector.newc_entry("etc/example", os.urandom(90000),
+                                    stat.S_IFREG | 0o644, 1)
+                + injector.newc_entry("TRAILER!!!", b"", 0, 2)
+            )
+            source.write_bytes(gzip.compress(archive))
+            elf = bytearray(100_000)
+            elf[:6] = b"\x7fELF\x02\x01"
+            elf[18:20] = b"\x3e\x00"
+            elf[32:40] = (64).to_bytes(8, "little")
+            elf[54:56] = (56).to_bytes(2, "little")
+            elf[56:58] = (1).to_bytes(2, "little")
+            elf[64:68] = (1).to_bytes(4, "little")
+            driver.write_bytes(elf)
+            license_file.write_text("MIT License\nCopyright Cua AI", encoding="utf-8")
+            injector.inject(source, target, LAUNCHER, cua=driver,
+                            cua_license=license_file)
+            injector.verify(target, LAUNCHER, cua=driver, cua_license=license_file)
+            data = gzip.decompress(target.read_bytes())
+            self.assertIn(injector.CUA_DRIVER_PATH.encode() + b"\0", data)
+            self.assertIn(injector.CUA_LICENSE_PATH.encode() + b"\0", data)
+            with self.assertRaisesRegex(ValueError, "already contains"):
+                injector.inject(target, target, LAUNCHER, cua=driver,
+                                cua_license=license_file)
+            elf[18:20] = b"\xb7\x00"
+            with self.assertRaisesRegex(ValueError, "x86_64"):
+                injector.validate_cua_driver(elf)
+
+    def test_preloads_xorg_virtual_desktop_with_license_and_startup_script(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source, target = root / "source.gz", root / "target.gz"
+            module, license_file = root / "dummy_drv.so", root / "COPYRIGHT"
+            archive = (
+                injector.newc_entry("etc/example", os.urandom(110_000),
+                                    stat.S_IFREG | 0o644, 1)
+                + injector.newc_entry("TRAILER!!!", b"", 0, 2)
+            )
+            source.write_bytes(gzip.compress(archive))
+            elf = bytearray(4096)
+            elf[:6] = bytes([127, 69, 76, 70, 2, 1])
+            elf[18:20] = bytes([0x3e, 0])
+            module.write_bytes(elf)
+            license_file.write_text(
+                "Copyright X.Org Foundation. Redistribution permitted under "
+                "the MIT/X11 terms. " * 4, encoding="utf-8")
+            cfg = HERE / "xorg-dummy.conf"
+            script = HERE / "soil-ensure-desktop.sh"
+            injector.inject(source, target, LAUNCHER,
+                            dummy=module, dummy_license=license_file,
+                            dummy_config=cfg, desktop_ensure=script)
+            injector.verify(target, LAUNCHER,
+                            dummy=module, dummy_license=license_file,
+                            dummy_config=cfg, desktop_ensure=script)
+            payload = gzip.decompress(target.read_bytes())
+            for name in (
+                injector.XORG_DUMMY_PATH, injector.XORG_CONFIG_PATH,
+                injector.XORG_ENSURE_PATH, injector.XORG_LICENSE_PATH
+            ):
+                self.assertIn(name.encode() + bytes([0]), payload)
+            self.assertIn(b"sudo -n", payload)
+            with self.assertRaisesRegex(ValueError, "already contains"):
+                injector.inject(target, target, LAUNCHER,
+                                dummy=module, dummy_license=license_file,
+                                dummy_config=cfg, desktop_ensure=script)
+
     def test_rejects_invalid_pointer_and_truncated_newc(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

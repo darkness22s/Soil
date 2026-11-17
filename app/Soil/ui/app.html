@@ -951,6 +951,9 @@
   .native-entry button:disabled{opacity:.5;cursor:default}
   .native-status{font-size:12px;margin:12px 0;min-height:18px;overflow-wrap:anywhere;color:var(--muted)}
   .native-status.error{color:var(--red)}
+  .native-dropzone{border:1px dashed var(--line);border-radius:10px;padding:22px 14px;text-align:center;color:var(--muted);cursor:pointer;font-size:12px}
+  .native-dropzone:hover,.native-dropzone:focus-visible,.native-dropzone.dragging{border-color:var(--ink);color:var(--ink);background:var(--grav-2);outline-offset:2px}
+  .native-dropzone[aria-disabled=true]{opacity:.5;cursor:default}
   .native-dialog input[type=file]{display:none}
 </style>
 </head>
@@ -1156,15 +1159,16 @@
     <div>
       <div class="skill-dialog-kicker">Inside your Soil VM</div>
       <h2 id="nativeAppsTitle">Native Linux apps</h2>
-      <p>Import a Linux x86-64 ELF executable or Type 2 AppImage. It runs inside the selected bundled Linux guest, never on Windows. The VM must be running to launch it.</p>
+      <p>Pick an x86-64 AppImage or ELF and Soil will import it, start this VM if needed, and launch it inside Linux. No terminal or setup commands. Debian/RPM packages are not supported by the minimal guest.</p>
     </div>
     <button type="button" class="skill-x" id="nativeAppsClose" aria-label="Close Linux apps dialog">&times;</button>
   </div>
+  <div class="native-dropzone" id="nativeAppsDropZone" role="button" tabindex="0">Drop a Linux AppImage or ELF here, or click to choose a file</div>
   <div class="native-list" id="nativeAppsList"></div>
   <div class="native-status" id="nativeAppsStatus" role="status" aria-live="polite"></div>
   <input type="file" id="nativeAppsFile" accept=".AppImage,.appimage,.elf,.bin,.run">
   <div class="skill-actions">
-    <button type="button" id="nativeAppsImport">Import ELF / AppImage</button>
+    <button type="button" id="nativeAppsImport">Import &amp; Launch</button>
     <button type="button" id="nativeAppsDone" class="skill-done">Done</button>
   </div>
 </dialog>

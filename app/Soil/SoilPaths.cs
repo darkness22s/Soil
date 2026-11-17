@@ -38,6 +38,7 @@ public sealed class SoilPaths
     public string ConfigPath => Path.Combine(Root, "config.json");
     public string ReadmePath => Path.Combine(Root, "README.txt");
     public string CliEndpointPath => Path.Combine(Root, "cli-endpoint.json");
+    public string ComputerTokenPath => Path.Combine(KeysDir, "computer-use.token");
 
     public static SoilPaths CreateDefault()
     {

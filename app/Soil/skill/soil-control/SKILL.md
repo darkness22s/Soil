@@ -1,11 +1,81 @@
 ---
 name: soil-control
-description: Operate Soil VMs and use their desktops. For Linux, use the local soil computer CLI or authenticated screenshot/action API to click, scroll, type and press keys in running VMs. For Windows, manage VMs with Soil.exe vm.
+description: Install/import real Linux AppImage or ELF apps into Soil desktop VMs in one command, then manage and use Soil VMs. Includes Windows Soil.exe vm app CLI and Linux computer-use CLI/API.
 ---
 
 # Soil VM control
 
-Use **Linux `soil computer`** for agent computer use, or **Windows `Soil.exe vm`** for VM management. Soil must already be open. Only operate machines the user approved; never start a stopped VM just to probe it.
+**When asked to install/import/run a Linux application in a Soil VM, use `Soil.exe vm app install` first.** For screen automation on a Linux host use `soil computer`; for VM control on Windows use `Soil.exe vm`. Soil must be open. Only operate VMs the user selected; don't start one just to inspect it.
+
+## Windows: built-in per-VM computer-use tools (MCP + CLI)
+
+**Use these to operate the actual Soil VM desktop after import/launch.** The tools are built into Soil and ready for every desktop VM; there is no second guest download, no manual SSH, and no long-running agent process in a stopped VM. The default fast screenshot/action tools use the host-side framebuffer and PS/2 transport. **The authentic upstream trycua Cua Driver v0.49.5 binary is now preloaded into the Windows installer guest image**, with its MIT license and checksum verified at build. The additional `soil_vm_cua_call` MCP tool or `vm computer cua` command starts the guest Cua daemon on demand with telemetry disabled. It requires a usable X11 desktop; if guest X11 is unavailable it reports an error and is **not** a working accessibility interface. Do not misrepresent a host fallback as successful native Cua execution.
+
+For a local agent supporting **MCP**, register the installed Soil executable as a stdio server. In Codex, run:
+
+```powershell
+$soil = (Get-Process -Name Soil | Select-Object -First 1 -ExpandProperty Path)
+codex mcp add soil-vm-computer -- "$soil" vm computer mcp
+```
+
+For other MCP-capable agents, register command `<absolute-path-to-Soil.exe>`, arguments `vm computer mcp`, transport `stdio`. Restart or reconnect the agent if it caches MCP servers. The server exposes `soil_list_vms`, `soil_vm_screenshot`, `soil_vm_action`, and `soil_vm_cua_call` (genuine guest driver). The screenshot is returned as an **image in the tool result**, not an invented text description. An action result `{"ok":true}` means input was delivered, **not** that the GUI did what was intended.
+
+Shell-based agents can use the same VM surfaces without MCP:
+
+```powershell
+& $soil vm list
+& $soil vm computer screenshot '<vm-id>' "$env:TEMP\soil-screen.jpg"
+& $soil vm computer action '<vm-id>' '{"action":"click","x":450,"y":300}'
+& $soil vm computer action '<vm-id>' '{"action":"type","text":"hello world"}'
+& $soil vm computer action '<vm-id>' '{"action":"key","key":"ctrl+a"}'
+# Genuine upstream Cua Driver (only after X11 is ready):
+& $soil vm computer cua '<vm-id>' get_desktop_state '{}'
+```
+
+**Prefer `soil_vm_cua_call` for upstream driver actions** when it can successfully observe the guest X11 desktop (for example tool `get_desktop_state`, `list_apps`, `click`, or `type_text` with that tool\'s documented JSON schema). The host-only `soil_vm_action` remains the fallback where X11 is missing. `Soil.exe vm computer cua <vm-id> <tool> [json]` offers the same upstream bridge for shell agents. Never silently treat an upstream driver error as a completed action. In the tested Soil guest, the X11 server does not boot and the bundled virtual Xvfb crashes. If the Cua tool reports X11 unavailable, **stop and report the guest graphics problem** instead of retrying installation, starting random desktop daemons, or claiming a GUI was opened.
+
+**Computer-use workflow:** (1) list VMs; (2) use the user-selected VM ID; (3) confirm status `running` (ask before starting stopped VMs unless launch was explicitly requested); (4) screenshot and inspect the current GUI; (5) send one action; (6) screenshot again and confirm the intended change. Repeat only while evidence improves. The fixed 1360×768 screenshot coordinates are relative to the original image. `click`, `double_click`, `move` take `x,y`; `key` takes a key name or modifier shortcut (e.g. `ctrl+a`); `type` supports plain ASCII keyboard characters up to 4096. Scroll, drag, accessibility element trees, background window targeting, and arbitrary Unicode typing are **not available in this bridge**. PS/2 pointer movement is relative and may be affected by guest acceleration; inspect a fresh screenshot after every click. Never infer that an app launched only because an install returned success.
+
+Computer API endpoints are on Soil's local loopback server: `GET /api/vms/{id}/computer/screenshot` (JPEG), `POST /api/vms/{id}/computer/action` (JSON), and `GET /api/vms/{id}/computer` (capabilities). They require the Soil-local bearer token stored in the protected Soil keys folder; **do not echo it, log it, or transmit it off-device.** Prefer the CLI or MCP, which handle authentication.
+
+## Install a Linux app into a Soil VM — the normal agent workflow (Windows host)
+
+**One command does the work.** No SSH commands, guest filesystem copying, API requests, VM boot orchestration, package conversions or terminal setup. Soil imports the file into persistent per-VM storage, starts the selected desktop VM *only because installation-and-launch was requested*, waits for the bundled Linux guest, transfers the app and launches it inside that guest (never on Windows).
+
+1. Obtain the **user-selected, trusted x86-64 Type 2 AppImage or standalone Linux ELF executable** as a local file on the Windows host. If the user supplies a path, use it. If they supply a trusted publisher download URL, download the requested binary to a local file and verify the source; do **not** run it on Windows. Do not invent a path or download from an untrusted mirror.
+2. Run the install command. It automatically picks a desktop VM **only if exactly one exists**. With multiple desktops, run `vm list` and use `--vm <id>` to target the user-approved VM; if unclear, ask which VM.
+3. Read the JSON output: `status: "launched"` means the guest launch command succeeded, **not** that the UI definitely displayed. Use `soil_vm_screenshot` from the built-in MCP server (or `vm computer screenshot` from the CLI) to verify the application visually; otherwise report only that launch was requested. Never claim visual success without an observation.
+
+```powershell
+$soil = (Get-Process -Name Soil | Select-Object -First 1 -ExpandProperty Path)
+& $soil vm app install 'C:\Users\me\Downloads\Example.AppImage'
+# Multiple desktop VMs? Supply the specific destination:
+& $soil vm app install 'C:\Users\me\Downloads\Example.AppImage' --vm '<vm-id>'
+```
+
+The command streams the local file and reports `vmId`, `vmName`, `appId`, `appName`, and `status`. It handles stopped/parked VMs without a separate Start action. If import succeeds but launch fails, the CLI tells you the saved `appId` and a one-command retry; **do not reimport the same file by default**.
+
+```powershell
+& $soil vm app list --vm '<vm-id>'
+& $soil vm app launch '<app-id>' --vm '<vm-id>' # starts stopped VM if necessary
+& $soil vm app install 'C:\path\Example.AppImage' --vm '<vm-id>' --no-launch
+& $soil vm app remove '<app-id>' --vm '<vm-id>' # confirm removal first
+```
+
+**Supported:** one executable per import, Linux x86-64 ELF or Type 2 AppImage, between 64 bytes and 256 MiB. **Not supported:** `.deb`, `.rpm`, `.iso`, shell installers, Windows EXEs, arbitrary archives, or ELF binaries relying on shared libraries missing from Soil's compact Tiny Core guest. A `.deb`/other unsupported file is **not** installed successfully; explain this clearly and request a trusted standalone AppImage/ELF instead of attempting undocumented guest package-manager hacks. Apps are restored to the guest after a restart but do not auto-run until launched. Guest execution requires the updated bundled `core2.gz` containing `soil-native`.
+
+**UI alternative:** In the Windows Soil app, select the desktop VM → **Linux apps** → **Import & Launch**, or drop an AppImage/ELF onto the dialog. Soil starts the VM if needed. Do not tell the user to manually SSH, click Start, or move files into the guest.
+
+### Recovery playbook (agents must use this instead of improvising)
+
+- **Before retrying any failed install**, use `& $soil vm app list --vm '<vm-id>'`. If the imported app is listed, **do not upload another copy**. Launch the listed `appId` with `& $soil vm app launch '<app-id>' --vm '<vm-id>'`. If absent, retry installation once after correcting the reported issue.
+- **`This instance has already started one or more requests. Properties can only be modified before sending the first request.`** is a bug in older Soil installers (the CLI changed `HttpClient.Timeout` too late), **not a Linux error**. Install a rebuilt Soil version containing the fix and rerun once; repeating the command in the same old executable cannot help. Do not attempt manual SSH, patch API files, or fake success.
+- **An app is saved but guest launch fails (HTTP 409):** Soil now relays the guest's actual startup error if available. Report that error clearly. If it says missing shared libraries, incompatible AppImage runtime or executable format, explain that the compact guest cannot execute this app as-is; do not pretend it launched and do not silently fetch libraries or install a different OS. Ask for a compatible standalone build if needed.
+- **SSH unavailable or guest readiness timeout:** inspect `& $soil vm list`, check the selected VM, and retry `vm app launch` **once** using the existing app ID after the guest becomes ready. Do not create extra VMs, change firmware, or repeatedly reinstall the app.
+- **No matching desktop VM / multiple choices:** use the user-selected VM ID; ask if the intended destination is ambiguous. **File rejected:** only native x86-64 Type 2 AppImage or ELF, max 256 MiB. Never describe a `.deb`/`.rpm` upload as a working installation.
+- **Success response vs. actual execution:** CLI `status: launched` means the guest launcher returned successfully after a short startup check, **not** that a GUI window was rendered. Verify on the VM screen when possible. If it never appears, say so and report the missing verification rather than claiming the problem is solved.
+
+If Soil isn't open, open it first. Only run executables the user explicitly approves and trusts. Retry only after understanding the actual error and avoid changing guest internals as a workaround.
 
 ## Linux: shortest agent workflow
 
@@ -66,25 +136,8 @@ $soil = (Get-Process -Name Soil | Select-Object -First 1 -ExpandProperty Path)
 
 Open Soil first if `$soil` is empty. Use IDs, not names. `s`/`m`/`l` VM sizes are supported. Commands return JSON or a nonzero exit code. Do not edit internal endpoint files or call undocumented internal APIs.
 
-## Native Linux apps inside an existing desktop VM
-
-In the **default Windows Soil app**, select a desktop VM and click **Linux
-apps** next to the VM controls. Import an **x86-64 Linux ELF** executable
-or **Type 2 AppImage** (up to 256 MiB). The file is stored with the VM,
-transferred through Soil's existing guest SSH tunnel and launched **inside the
-bundled Linux guest**. Import does not start the VM; press **Start** before
-choosing **Launch**. Imports are restored into the Linux desktop when a stopped
-VM is started again, but the guest processes do not auto-run.
-
-Native ELF binaries need compatible shared libraries inside Soil's minimal
-Tiny Core guest. This is not a Ubuntu/Debian package manager: `.deb`, `.rpm`,
-`.iso`, Windows EXEs, and shell install scripts are not supported. The
-native-application feature requires the bundled updated `core2.gz` image;
-Soil creates the guest SSH key automatically when needed. Only run binaries the user explicitly chose
-and trusts.
-
 ## Dependency and skill updates
 
 Linux automation delegates VNC/RFB control to bundled **vncdotool 1.4.2**, MIT licensed, https://github.com/sibson/vncdotool. The full upstream license is included at `app/linux/third-party/vncdotool-LICENSE.txt`. Computer use is invoked on demand; no automation process stays running while idle. See `app/linux/README.md`.
 
-The **Install Skill** button does not overwrite an existing skill. To pick up these instructions, deliberately replace the installed `soil-control/SKILL.md` with the updated copy.
+The **Install Skill** button updates earlier Soil-managed versions and backs up the previous copy; non-Soil/custom conflicting skills are left intact.

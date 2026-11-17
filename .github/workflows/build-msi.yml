@@ -31,10 +31,23 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
       - name: Build Linux guest SDK CLI
         run: bash tools/soil-ci/build-guest-cli.sh tools/soil-ci/out/soil
+      - name: Download verified upstream Cua Driver for every guest
+        run: bash tools/soil-ci/fetch-cua-driver.sh tools/soil-ci/out/cua-driver
+      - name: Fetch real-VM-verified Xorg virtual display module and notices
+        run: bash tools/soil-ci/fetch-xorg-dummy.sh tools/soil-ci/out
+      # Package as one archive: upload-artifact treats multi-file globs as
+      # independent paths and previously dropped the Xorg license/module.
+      - name: Package complete Linux guest runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -czf tools/soil-ci/out/guest-runtime.tar.gz -C tools/soil-ci/out \
+            soil cua-driver dummy_drv.so xf86-video-dummy-LICENSE.txt
+          tar -tzf tools/soil-ci/out/guest-runtime.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: soil-linux-guest-cli
-          path: tools/soil-ci/out/soil
+          path: tools/soil-ci/out/guest-runtime.tar.gz
           if-no-files-found: error
 
   build:
@@ -51,6 +64,16 @@ jobs:
         with:
           name: soil-linux-guest-cli
           path: tools/soil-ci/out
+      - name: Extract and verify Linux guest runtime
+        shell: pwsh
+        run: |
+          tar -xzf tools/soil-ci/out/guest-runtime.tar.gz -C tools/soil-ci/out
+          if ($LASTEXITCODE -ne 0) { throw 'Could not extract Linux runtime bundle' }
+          foreach ($file in @('soil','cua-driver','dummy_drv.so','xf86-video-dummy-LICENSE.txt')) {
+            if (-not (Test-Path -LiteralPath (Join-Path 'tools/soil-ci/out' $file))) {
+              throw "Guest runtime artifact missing: $file"
+            }
+          }
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v4
@@ -70,7 +93,7 @@ jobs:
 
       - name: Build MSI
         shell: pwsh
-        run: .\app\build.ps1 -SkipEngine -GuestSoilExecutable .\tools\soil-ci\out\soil
+        run: .\app\build.ps1 -SkipEngine -GuestSoilExecutable .\tools\soil-ci\out\soil -GuestCuaDriver .\tools\soil-ci\out\cua-driver -GuestXorgDummyDriver .\tools\soil-ci\out\dummy_drv.so -GuestXorgDummyLicense .\tools\soil-ci\out\xf86-video-dummy-LICENSE.txt
 
       - name: Upload MSI artifact
         id: upload

@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
@@ -22,6 +24,8 @@ public sealed class AppServer : IDisposable
     private readonly AppRuntimeManager m_apps;
     private readonly AgentManager m_agents;
     private readonly NativeLinuxAppManager m_native;
+    private readonly VmComputerTools m_computer;
+    private readonly string m_computerToken;
     private readonly UiStateStore m_ui;
 
     public string Url { get; private set; } = "";
@@ -34,6 +38,13 @@ public sealed class AppServer : IDisposable
         m_apps = new AppRuntimeManager(manager, paths, m_github);
         m_agents = new AgentManager(manager);
         m_native = new NativeLinuxAppManager(manager, paths);
+        m_computer = new VmComputerTools(manager);
+        Directory.CreateDirectory(paths.KeysDir);
+        if (!File.Exists(paths.ComputerTokenPath))
+            File.WriteAllText(paths.ComputerTokenPath, Convert.ToHexString(RandomNumberGenerator.GetBytes(32)));
+        m_computerToken = File.ReadAllText(paths.ComputerTokenPath).Trim();
+        if (m_computerToken.Length != 64 || !m_computerToken.All(Uri.IsHexDigit))
+            throw new InvalidOperationException("Invalid Soil computer-use token; repair the protected key file.");
         manager.RestoreNativeApps = m_native.RestoreAsync;
         m_ui = new UiStateStore(paths);
 
@@ -103,6 +114,18 @@ public sealed class AppServer : IDisposable
         });
 
         MapApi();
+    }
+
+    private bool ComputerAuthorized(HttpRequest request)
+    {
+        var provided = request.Headers.Authorization.ToString();
+        if (!provided.StartsWith("Bearer ", StringComparison.Ordinal))
+            return false;
+        var value = provided["Bearer ".Length..];
+        if (value.Length != m_computerToken.Length)
+            return false;
+        return CryptographicOperations.FixedTimeEquals(
+            Encoding.ASCII.GetBytes(value), Encoding.ASCII.GetBytes(m_computerToken));
     }
 
     private void MapApi()
@@ -409,6 +432,68 @@ public sealed class AppServer : IDisposable
         {
             var jpeg = m_manager.FrameJpeg(id);
             return jpeg is null ? Results.NotFound() : Results.File(jpeg, "image/jpeg");
+        });
+
+        // Each VM exposes a ready-to-use computer surface through the host
+        // framebuffer/input engine. This works before any guest-side tooling is
+        // installed and consumes no guest resources while the VM is parked.
+        // Agent endpoints are protected with a per-install bearer token.
+        m_app.MapGet("/api/vms/{id}/computer", (string id, HttpRequest req) =>
+        {
+            if (!ComputerAuthorized(req)) return Results.Unauthorized();
+            var vm = m_manager.Get(id);
+            return vm is null ? Results.NotFound()
+                : Results.Json(new {
+                    vmId = id, status = vm.Status,
+                    width = VmComputerTools.Width, height = VmComputerTools.Height,
+                    screenshot = "GET /api/vms/" + id + "/computer/screenshot",
+                    action = "POST /api/vms/" + id + "/computer/action",
+                    supported = new[] { "move", "click", "double_click", "key", "type" }
+                }, JsonOptions.Web);
+        });
+        m_app.MapGet("/api/vms/{id}/computer/screenshot", (string id, HttpRequest req) =>
+        {
+            if (!ComputerAuthorized(req)) return Results.Unauthorized();
+            try
+            {
+                var jpeg = m_computer.Capture(id);
+                return Results.File(jpeg, "image/jpeg");
+            }
+            catch (FileNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+            catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
+        });
+        m_app.MapPost("/api/vms/{id}/computer/action", async (string id, HttpContext ctx) =>
+        {
+            if (!ComputerAuthorized(ctx.Request)) return Results.Unauthorized();
+            try
+            {
+                using var doc = await JsonDocument.ParseAsync(ctx.Request.Body,
+                    cancellationToken: ctx.RequestAborted);
+                await m_computer.ActionAsync(id, doc.RootElement, ctx.RequestAborted);
+                return Results.Json(new { ok = true }, JsonOptions.Web);
+            }
+            catch (JsonException) { return Results.BadRequest(new { error = "Invalid JSON computer action." }); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+            catch (FileNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+            catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
+        });
+
+
+        m_app.MapPost("/api/vms/{id}/computer/cua/{tool}",
+            async (string id, string tool, HttpContext ctx) =>
+        {
+            if (!ComputerAuthorized(ctx.Request)) return Results.Unauthorized();
+            try
+            {
+                using var body = await JsonDocument.ParseAsync(ctx.Request.Body,
+                    cancellationToken: ctx.RequestAborted);
+                var result = await m_manager.CallGuestCuaDriverAsync(
+                    id, tool, body.RootElement, ctx.RequestAborted);
+                return Results.Json(new { tool, output = result }, JsonOptions.Web);
+            }
+            catch (JsonException) { return Results.BadRequest(new { error = "Invalid Cua Driver arguments." }); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+            catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
         });
 
         m_app.MapGet("/api/vms/{id}/stream.mjpg", async (HttpContext ctx, string id) =>

@@ -22,10 +22,23 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
       - name: Build Linux guest SDK CLI
         run: bash tools/soil-ci/build-guest-cli.sh tools/soil-ci/out/soil
+      - name: Download verified upstream Cua Driver for every guest
+        run: bash tools/soil-ci/fetch-cua-driver.sh tools/soil-ci/out/cua-driver
+      - name: Fetch real-VM-verified Xorg virtual display module and notices
+        run: bash tools/soil-ci/fetch-xorg-dummy.sh tools/soil-ci/out
+      # Package as one archive: upload-artifact treats multi-file globs as
+      # independent paths and previously dropped the Xorg license/module.
+      - name: Package complete Linux guest runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -czf tools/soil-ci/out/guest-runtime.tar.gz -C tools/soil-ci/out \
+            soil cua-driver dummy_drv.so xf86-video-dummy-LICENSE.txt
+          tar -tzf tools/soil-ci/out/guest-runtime.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: soil-linux-guest-cli
-          path: tools/soil-ci/out/soil
+          path: tools/soil-ci/out/guest-runtime.tar.gz
           if-no-files-found: error
 
   build-installer:
@@ -40,6 +53,16 @@ jobs:
         with:
           name: soil-linux-guest-cli
           path: tools/soil-ci/out
+      - name: Extract and verify Linux guest runtime
+        shell: pwsh
+        run: |
+          tar -xzf tools/soil-ci/out/guest-runtime.tar.gz -C tools/soil-ci/out
+          if ($LASTEXITCODE -ne 0) { throw 'Could not extract Linux runtime bundle' }
+          foreach ($file in @('soil','cua-driver','dummy_drv.so','xf86-video-dummy-LICENSE.txt')) {
+            if (-not (Test-Path -LiteralPath (Join-Path 'tools/soil-ci/out' $file))) {
+              throw "Guest runtime artifact missing: $file"
+            }
+          }
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
@@ -65,7 +88,7 @@ jobs:
           $gcc = Get-ChildItem -Path $mingwRoot -Filter gcc.exe -File -Recurse | Select-Object -First 1
           if (-not $gcc) { throw "gcc.exe not found under $mingwRoot" }
           $env:PATH = "$($gcc.DirectoryName);$env:PATH"
-          .\app\build.ps1 -ImagesDir .\app\images -Gcc $gcc.FullName -GuestSoilExecutable .\tools\soil-ci\out\soil
+          .\app\build.ps1 -ImagesDir .\app\images -Gcc $gcc.FullName -GuestSoilExecutable .\tools\soil-ci\out\soil -GuestCuaDriver .\tools\soil-ci\out\cua-driver -GuestXorgDummyDriver .\tools\soil-ci\out\dummy_drv.so -GuestXorgDummyLicense .\tools\soil-ci\out\xf86-video-dummy-LICENSE.txt
       - name: Test per-VM SSH key injection into real packaged guest initramfs
         shell: pwsh
         run: dotnet run --project tools/soil-ci/GuestInitrdSmoke/GuestInitrdSmoke.csproj -- app/dist/Soil/images/core2.gz
@@ -78,6 +101,7 @@ jobs:
           node --check .\app\Soil\ui\native-ui.js
           node --check .\app\Soil\ui\skill-ui.js
           node --test .\tools\soil-ci\skill-ui.test.mjs
+          node --test .\tools\soil-ci\native-ui.test.mjs
           node --check .\app\Soil\ui\onboarding.js
           node --check .\app\auth-worker\src\index.js
           node --check .\tools\soil-ci\soil-ci.mjs
@@ -87,7 +111,7 @@ jobs:
         shell: pwsh
         run: |
           $root = Join-Path $PWD 'app/dist/Soil'
-          python tools/soil-ci/inject-native-guest.py (Join-Path $root 'images/core2.gz') (Join-Path $root 'images/core2.gz') --runtime tools/soil-ci/out/soil --verify
+          python tools/soil-ci/inject-native-guest.py (Join-Path $root 'images/core2.gz') (Join-Path $root 'images/core2.gz') --runtime tools/soil-ci/out/soil --cua-driver tools/soil-ci/out/cua-driver --cua-license app/Soil/third-party/cua-driver-LICENSE.md --xorg-dummy tools/soil-ci/out/dummy_drv.so --xorg-license tools/soil-ci/out/xf86-video-dummy-LICENSE.txt --xorg-config tools/soil-ci/xorg-dummy.conf --desktop-ensure tools/soil-ci/soil-ensure-desktop.sh --verify
           if ($LASTEXITCODE -ne 0) { throw 'Missing native guest launcher in bundled initramfs' }
           foreach ($entry in @(
             @{ Name='images/vmlinuz64'; Minimum=7000000 },
@@ -99,7 +123,8 @@ jobs:
             @{ Name='ui/app.html'; Minimum=20000 },
             @{ Name='ui/skill-ui.js'; Minimum=1000 },
             @{ Name='ui/native-ui.js'; Minimum=1000 },
-            @{ Name='skill/soil-control/SKILL.md'; Minimum=100 }
+            @{ Name='skill/soil-control/SKILL.md'; Minimum=100 },
+            @{ Name='third-party/xf86-video-dummy-LICENSE.txt'; Minimum=100 }
           )) {
             $path = Join-Path $root $entry.Name
             if (-not (Test-Path -LiteralPath $path)) { throw "Missing installer payload: $($entry.Name)" }

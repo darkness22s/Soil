@@ -28,11 +28,36 @@ done
 # Build the exact static SDK runtime that Windows installer CI embeds.
 bash "$repo/tools/soil-ci/build-guest-cli.sh" "$tmp/soil"
 ssh-keygen -q -t ed25519 -N "" -f "$tmp/guest" -C soil-guest-smoke
+
+# Test the SAME in-guest preloading that the Windows installer ships, not
+# an ephemeral copy over SSH. Only the dedicated Cua test supplies these.
+cua_guest_args=()
+if [[ -n "${SOIL_CUA_DRIVER_ARCHIVE:-}" ]]; then
+  mkdir -p "$tmp/cua-release"
+  tar -xzf "$SOIL_CUA_DRIVER_ARCHIVE" -C "$tmp/cua-release"
+  driver_binary="$(find "$tmp/cua-release" -name cua-driver -type f -print -quit)"
+  [[ -n "$driver_binary" && -s "$driver_binary" ]] || {
+    echo "Pinned Cua release does not contain the Linux driver" >&2; exit 1;
+  }
+  [[ -s "${SOIL_CUA_DUMMY_MODULE:-}" && -s "${SOIL_CUA_DUMMY_LICENSE:-}" ]] || {
+    echo "Real guest Cua test requires a signed Xorg dummy binary and license" >&2; exit 1;
+  }
+  cua_guest_args=(
+    --cua-driver "$driver_binary"
+    --cua-license "$repo/app/Soil/third-party/cua-driver-LICENSE.md"
+    --xorg-dummy "$SOIL_CUA_DUMMY_MODULE"
+    --xorg-license "$SOIL_CUA_DUMMY_LICENSE"
+    --xorg-config "$repo/tools/soil-ci/xorg-dummy.conf"
+    --desktop-ensure "$repo/tools/soil-ci/soil-ensure-desktop.sh"
+  )
+fi
 python3 "$repo/tools/soil-ci/inject-native-guest.py" \
   "$images/core2.gz" "$tmp/core2-native.gz" \
-  --launcher "$repo/soil-sdk/runtime/soil-native" --runtime "$tmp/soil"
+  --launcher "$repo/soil-sdk/runtime/soil-native" --runtime "$tmp/soil" \
+  "${cua_guest_args[@]}"
 python3 "$repo/tools/soil-ci/inject-native-guest.py" \
-  "$tmp/core2-native.gz" "$tmp/core2-native.gz" --runtime "$tmp/soil" --verify
+  "$tmp/core2-native.gz" "$tmp/core2-native.gz" --runtime "$tmp/soil" \
+  "${cua_guest_args[@]}" --verify
 dotnet run --project "$repo/tools/soil-ci/GuestInitrdSmoke/GuestInitrdSmoke.csproj" -- \
   --prepare "$tmp/core2-native.gz" "$tmp/machine" "$tmp/guest.pub"
 initrd="$tmp/machine/boot/core2-ssh.gz"
@@ -124,6 +149,29 @@ cat "$tmp/native-app" | ssh "${ssh_opts[@]}" tc@127.0.0.1 "cat > /tmp/soil-ci-na
 ssh "${ssh_opts[@]}" tc@127.0.0.1 "soil-native install nativeapp /tmp/soil-ci-native 'CI Native Linux App'"
 ssh "${ssh_opts[@]}" tc@127.0.0.1 "soil-native launch nativeapp && sleep 1 && test -f /tmp/soil-native-guest-executed"
 ssh "${ssh_opts[@]}" tc@127.0.0.1 "soil-native list | grep '^nativeapp$' && soil-native remove nativeapp"
+# A real guest startup failure must be visible to the host/agent instead of
+# silently reporting 'launched'. Simulate an ELF with a missing dependency.
+cat > "$tmp/failing.c" <<'EOF'
+#include <stdio.h>
+int main(void) {
+    fputs("soil-smoke-expected-startup-error: missing dependency\\n", stderr);
+    return 127;
+}
+EOF
+gcc -static -O2 "$tmp/failing.c" -o "$tmp/failing-app"
+cat "$tmp/failing-app" | ssh "${ssh_opts[@]}" tc@127.0.0.1 "cat > /tmp/soil-ci-failing"
+ssh "${ssh_opts[@]}" tc@127.0.0.1 "soil-native install failapp /tmp/soil-ci-failing 'CI Failure'"
+if ssh "${ssh_opts[@]}" tc@127.0.0.1 "soil-native launch failapp" >"$tmp/launch-error.log" 2>&1; then
+  echo "Guest incorrectly reported a failed app as launched" >&2
+  exit 1
+fi
+grep -q "soil-smoke-expected-startup-error" "$tmp/launch-error.log" || {
+  echo "Guest startup error was not relayed to host" >&2
+  cat "$tmp/launch-error.log" >&2
+  exit 1
+}
+ssh "${ssh_opts[@]}" tc@127.0.0.1 "soil-native remove failapp"
+
 
 # Transfer a genuinely packaged native .sol (header, manifest, SquashFS, digest).
 # It must mount and execute in the actual guest kernel, not on the CI host.
@@ -139,3 +187,103 @@ ssh "${ssh_opts[@]}" tc@127.0.0.1 "! /bin/soil list | grep -q org.soil.smoke"
 cat "$tmp/BusyBox.sol" | ssh "${ssh_opts[@]}" tc@127.0.0.1 "cat > /tmp/BusyBox.sol"
 ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/soil run /tmp/BusyBox.sol | grep -x soil-third-party-ok"
 echo "PASS: real bundled Soil guest boot; raw ELF, native .sol lifecycle, and third-party BusyBox binary."
+
+if [[ -n "${SOIL_CUA_DRIVER_ARCHIVE:-}" ]]; then
+  echo "PROBE: actual preloaded upstream Cua Driver and tested Xorg dummy"
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+    "ls -l /bin/cua-driver /bin/soil-ensure-desktop \
+     /bin/soil-xorg/drivers/dummy_drv.so /etc/X11/soil-dummy.conf \
+     /usr/share/doc/cua-driver/LICENSE.md \
+     /usr/share/doc/xf86-video-dummy/copyright 2>&1 || true"
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+    "test -x /bin/cua-driver && test -x /bin/soil-ensure-desktop && \
+     test -f /bin/soil-xorg/drivers/dummy_drv.so && \
+     test -s /usr/share/doc/cua-driver/LICENSE.md && \
+     test -s /usr/share/doc/xf86-video-dummy/copyright"
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/cua-driver --version"
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/cua-driver telemetry disable"
+  # Before patching the guest this was consistently broken: /proc/fb was empty,
+  # /dev/fb0 had no driver, and Xvfb crashed. The bundled Xorg dummy now
+  # supplies the real guest desktop without needing any extra kernel module.
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 "/bin/soil-ensure-desktop"
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+    "DISPLAY=:0 xset q >/dev/null 2>&1 && ps w | grep -q '[f]luxbox'"
+  echo "PROBE: X11 server is reachable on DISPLAY=:0"
+  # Start Cua only after X is usable. The daemon initializes its capture
+  # backend at startup and does not necessarily recover from a missing X socket.
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+    "DISPLAY=:0 nohup /bin/cua-driver serve >/tmp/cua-driver.log 2>&1 </dev/null &"
+  # First-run initialization takes variable time. Poll the actual socket,
+  # do not assume an arbitrary two- or three-second delay is sufficient.
+  driver_ready=0
+  for attempt in $(seq 1 30); do
+    if ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+      "DISPLAY=:0 /bin/cua-driver status >/dev/null 2>&1"; then
+      driver_ready=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$driver_ready" != 1 ]]; then
+    ssh "${ssh_opts[@]}" tc@127.0.0.1 "tail -n 70 /tmp/cua-driver.log" || true
+    echo "Cua Driver did not serve inside the guest" >&2
+    exit 1
+  fi
+  if ! ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+    "DISPLAY=:0 /bin/cua-driver call get_desktop_state > /tmp/cua-desktop-state.json"; then
+    ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+      "tail -n 70 /tmp/cua-driver.log; head -c 1200 /tmp/cua-desktop-state.json" || true
+    echo "Cua Driver cannot observe the actual VM desktop" >&2
+    exit 1
+  fi
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+    "test -s /tmp/cua-desktop-state.json && wc -c /tmp/cua-desktop-state.json"
+  # Print only the response shape, never screenshot bytes, so the MCP
+  # adapter can preserve genuine image content in machine-readable results.
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 "cat /tmp/cua-desktop-state.json" \
+    > "$tmp/cua-desktop-state.json"
+  python3 - "$tmp/cua-desktop-state.json" <<'PY'
+import json, sys
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+print("CUA desktop top-level fields:", list(payload) if isinstance(payload, dict) else type(payload).__name__)
+if isinstance(payload, dict):
+    for key, value in payload.items():
+        if isinstance(value, dict):
+            print("CUA field", key, "nested keys:", list(value)[:25])
+        elif isinstance(value, list):
+            print("CUA field", key, "elements:", len(value),
+                  "first keys:", list(value[0])[:20] if value and isinstance(value[0], dict) else "")
+        elif isinstance(value, str):
+            print("CUA field", key, "text length:", len(value))
+        else:
+            print("CUA field", key, "value type:", type(value).__name__)
+PY
+  echo "PROBE: upstream move_cursor input schema"
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+    "DISPLAY=:0 /bin/cua-driver describe move_cursor | head -c 3500" || true
+  # Verify actual Cua mouse actions against the same observed desktop.
+  # The Xorg dummy driver uses exact X11 coordinates, not Soil's relative PS/2
+  # fallback. The action CLI returns a structured effect/result.
+  mouse_args='{"target":{"kind":"desktop","display_id":"primary"},"x":180,"y":125}'
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+    "DISPLAY=:0 /bin/cua-driver call move_cursor '$mouse_args' >/tmp/cua-move.json"
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+    "DISPLAY=:0 /bin/cua-driver call get_cursor_position > /tmp/cua-cursor.json"
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+    "DISPLAY=:0 /bin/cua-driver call click '$mouse_args' >/tmp/cua-click.json"
+  for name in move cursor click; do
+    ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+      "test -s /tmp/cua-$name.json && head -c 350 /tmp/cua-$name.json && echo"
+  done
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 "cat /tmp/cua-desktop-state.json" \
+    > "$tmp/cua-desktop-state.json"
+  python3 - "$tmp/cua-desktop-state.json" <<'PY'
+import json, sys
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+print("Cua screenshot response keys:", list(payload) if isinstance(payload, dict) else type(payload).__name__)
+if isinstance(payload, dict) and payload.get("isError") is True:
+    raise SystemExit("Cua Driver returned an error instead of a desktop screenshot")
+PY
+  echo "PASS: upstream Cua Driver desktop capture, mouse move and click executed in real guest."
+fi
+
