@@ -22,10 +22,14 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
       - name: Build Linux guest SDK CLI
         run: bash tools/soil-ci/build-guest-cli.sh tools/soil-ci/out/soil
+      - name: Download verified upstream Cua Driver for every guest
+        run: bash tools/soil-ci/fetch-cua-driver.sh tools/soil-ci/out/cua-driver
       - uses: actions/upload-artifact@v4
         with:
           name: soil-linux-guest-cli
-          path: tools/soil-ci/out/soil
+          path: |
+            tools/soil-ci/out/soil
+            tools/soil-ci/out/cua-driver
           if-no-files-found: error
 
   build-installer:
@@ -65,7 +69,7 @@ jobs:
           $gcc = Get-ChildItem -Path $mingwRoot -Filter gcc.exe -File -Recurse | Select-Object -First 1
           if (-not $gcc) { throw "gcc.exe not found under $mingwRoot" }
           $env:PATH = "$($gcc.DirectoryName);$env:PATH"
-          .\app\build.ps1 -ImagesDir .\app\images -Gcc $gcc.FullName -GuestSoilExecutable .\tools\soil-ci\out\soil
+          .\app\build.ps1 -ImagesDir .\app\images -Gcc $gcc.FullName -GuestSoilExecutable .\tools\soil-ci\out\soil -GuestCuaDriver .\tools\soil-ci\out\cua-driver
       - name: Test per-VM SSH key injection into real packaged guest initramfs
         shell: pwsh
         run: dotnet run --project tools/soil-ci/GuestInitrdSmoke/GuestInitrdSmoke.csproj -- app/dist/Soil/images/core2.gz
@@ -88,7 +92,7 @@ jobs:
         shell: pwsh
         run: |
           $root = Join-Path $PWD 'app/dist/Soil'
-          python tools/soil-ci/inject-native-guest.py (Join-Path $root 'images/core2.gz') (Join-Path $root 'images/core2.gz') --runtime tools/soil-ci/out/soil --verify
+          python tools/soil-ci/inject-native-guest.py (Join-Path $root 'images/core2.gz') (Join-Path $root 'images/core2.gz') --runtime tools/soil-ci/out/soil --cua-driver tools/soil-ci/out/cua-driver --cua-license app/Soil/third-party/cua-driver-LICENSE.md --verify
           if ($LASTEXITCODE -ne 0) { throw 'Missing native guest launcher in bundled initramfs' }
           foreach ($entry in @(
             @{ Name='images/vmlinuz64'; Minimum=7000000 },
