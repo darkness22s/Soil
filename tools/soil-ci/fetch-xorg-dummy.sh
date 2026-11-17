@@ -4,6 +4,10 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 out="${1:-$root/tools/soil-ci/out}"
+# Resolve the output before switching into the temporary download directory.
+# Otherwise a relative CI path is written under $temp and removed on exit.
+mkdir -p "$out"
+out="$(cd "$out" && pwd)"
 temp="$(mktemp -d -t soil-xorg-dummy-XXXXXX)"
 trap 'rm -rf "$temp"' EXIT
 cd "$temp"
