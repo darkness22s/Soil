@@ -54,7 +54,7 @@ internal static class SoilCli
                 BaseAddress = new Uri(baseUrl),
                 Timeout = TimeSpan.FromMinutes(6)
             };
-            return RunCommand(client, args);
+            return RunCommand(client, args, paths);
         }
         catch (OperationCanceledException)
         {
@@ -71,7 +71,7 @@ internal static class SoilCli
         }
     }
 
-    private static int RunCommand(HttpClient client, string[] args)
+    private static int RunCommand(HttpClient client, string[] args, SoilPaths paths)
     {
         if (args[0] != "vm" || args.Length < 2)
         {
@@ -111,6 +111,8 @@ internal static class SoilCli
                 break;
             case "app":
                 return RunNativeAppCommand(client, args);
+            case "computer":
+                return SoilComputerCli.Run(client, paths, args);
             default:
                 PrintHelp();
                 return 2;
@@ -320,6 +322,9 @@ internal static class SoilCli
         Console.WriteLine("  Soil.exe vm app list [--vm <id|name>]");
         Console.WriteLine("  Soil.exe vm app launch <app-id> [--vm <id|name>]");
         Console.WriteLine("  Soil.exe vm app remove <app-id> [--vm <id|name>]");
+        Console.WriteLine("  Soil.exe vm computer screenshot <vm-id> [file.jpg]");
+        Console.WriteLine("  Soil.exe vm computer action <vm-id> <json>");
+        Console.WriteLine("  Soil.exe vm computer mcp  (agent tool server)");
         Console.WriteLine("Start the Soil desktop app before running VM commands.");
     }
 }
