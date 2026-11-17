@@ -190,22 +190,33 @@ if [[ -n "${SOIL_CUA_DRIVER_ARCHIVE:-}" ]]; then
      for bin in Xorg Xvesa Xfbdev Xvfb startx xinit dbus-daemon; do \
        command -v \$bin || true; done; \
      ls /usr/local/etc/X11 /home/tc/.xsession /home/tc/.xinitrc 2>&1 || true" || true
-  # The direct kernel boot has no kernel fb0 device and the default serial
-  # console does not start X. Cua works against an isolated virtual display.
+  # The kernel has no fb0 driver, so try the Xorg dummy video backend.
+  # Keep this CI-only until the driver ABI and screenshot tests pass.
   if ! ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 xset q >/dev/null 2>&1"; then
-    echo "PROBE: starting guest Xvfb display for genuine Cua Driver"
+    [[ -n "${SOIL_CUA_DUMMY_MODULE:-}" ]] || {
+      echo "No Xorg dummy module provided for compatibility probe" >&2; exit 1;
+    }
+    echo "PROBE: testing native Xorg virtual video backend"
+    cat "$SOIL_CUA_DUMMY_MODULE" | ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+      "mkdir -p /tmp/soil-xorg-modules/drivers && cat > /tmp/soil-xorg-modules/drivers/dummy_drv.so"
+    cat "$repo/tools/soil-ci/xorg-dummy.conf" | ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+      "cat > /tmp/soil-dummy.conf"
     ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-      "nohup Xvfb :0 -screen 0 1360x768x24 -nolisten tcp >/tmp/soil-xvfb.log 2>&1 </dev/null &" || true
+      "sudo -n sh -c 'nohup Xorg :0 -config /tmp/soil-dummy.conf \
+       -modulepath /tmp/soil-xorg-modules,/usr/local/lib/xorg/modules \
+       -noreset -nolisten tcp -ac -logfile /tmp/soil-xorg.log -novtswitch \
+       >/tmp/soil-xorg-stdout.log 2>&1 </dev/null &' " || true
     gui_ready=0
-    for attempt in $(seq 1 15); do
+    for attempt in $(seq 1 18); do
       if ssh "${ssh_opts[@]}" tc@127.0.0.1 \
         "DISPLAY=:0 xset q >/dev/null 2>&1"; then gui_ready=1; break; fi
       sleep 1
     done
     if [[ "$gui_ready" != 1 ]]; then
       ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-        "tail -n 100 /tmp/soil-xvfb.log; ls -l /tmp/.X11-unix; ps w | grep Xvfb || true" || true
-      echo "Virtual X11 display failed to start inside guest" >&2
+        "tail -n 100 /tmp/soil-xorg.log /tmp/soil-xorg-stdout.log; \
+         ls -l /tmp/.X11-unix; ps w | grep Xorg || true" || true
+      echo "The virtual Xorg desktop did not start" >&2
       exit 1
     fi
     ssh "${ssh_opts[@]}" tc@127.0.0.1 \
