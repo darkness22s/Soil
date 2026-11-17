@@ -42,7 +42,7 @@ copies it into the payload as `/manifest.json`, and embeds it in the `.sol` head
 | `id` | string | yes | Unique package id, `^[a-z0-9][a-z0-9._-]{1,63}$`. Used for paths and desktop entries. |
 | `name` | string | yes | Display name (window title, desktop launcher). |
 | `version` | string | yes | `MAJOR.MINOR.PATCH`. Installing the same id replaces the previous file. |
-| `kind` | string | yes | ``webapp`, `installer`, `webapp+native`, or `native`. Must match header kind. |
+| `kind` | string | yes | `webapp`, `installer`, `webapp+native`, or `native`. Must match header kind. |
 | `entry` | string | webapp / webapp+native / native | HTML entry for web kinds; Linux executable or script for native, relative path inside payload. |
 | `icon` | string | yes | PNG path inside payload. 128×128 recommended. |
 | `description` | string | no | One-line description. |
@@ -52,7 +52,9 @@ copies it into the payload as `/manifest.json`, and embeds it in the `.sol` head
 | `permissions` | array | no | Runtime capabilities, see below. Default `[]`. |
 | `exec` | array | kind 3 / installer | Relative paths of bundled executables allowed via `soil.exec`. |
 | `install` | object | kind `installer` | `{ "command": "install.sh", "args": [], "root": false }`. |
-| `args` | array | no | Default arguments passed to a `native` executable (maximum 32 strings). |\n| `terminal` | bool | no | Use `Terminal=true` for installed native desktop launchers. |\n| `min_ram_mb` | int | no | Advisory; `soil run` warns when guest memory is below it. |
+| `args` | array | no | Default arguments passed to a `native` executable (maximum 32 strings). |
+| `terminal` | bool | no | Use `Terminal=true` for installed native desktop launchers. |
+| `min_ram_mb` | int | no | Advisory; `soil run` warns when guest memory is below it. |
 | `build` | object | no | Host-side frontend build: `command`, optional `webDir` and `entry`. |
 | `dev` | object | no | Host-side dev server: `command` and optional `url`. |
 
