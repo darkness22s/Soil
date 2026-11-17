@@ -198,8 +198,19 @@ if [[ -n "${SOIL_CUA_DRIVER_ARCHIVE:-}" ]]; then
       sleep 1
     done
     if [[ "$gui_ready" != 1 ]]; then
+      echo "PROBE: startx not available via SSH; testing shipped framebuffer X server"
       ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-        "tail -n 100 /tmp/soil-startx.log; ps w | grep -E 'Xorg|Xfbdev|fluxbox' || true" || true
+        "sudo -n sh -c 'nohup Xfbdev :0 -screen 0 1360x768x24 >/tmp/soil-xfbdev.log 2>&1 </dev/null &' " || true
+      for attempt in $(seq 1 12); do
+        if ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+          "DISPLAY=:0 xset q >/dev/null 2>&1"; then gui_ready=1; break; fi
+        sleep 1
+      done
+    fi
+    if [[ "$gui_ready" != 1 ]]; then
+      ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+        "tail -n 100 /tmp/soil-startx.log /tmp/soil-xfbdev.log; \
+         ls -la /tmp/.X11-unix; ps w | grep -E 'Xorg|Xfbdev|fluxbox' || true" || true
       echo "Guest X11 did not start; CUA capture is unavailable" >&2
       exit 1
     fi
