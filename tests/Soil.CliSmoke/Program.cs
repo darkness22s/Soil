@@ -11,6 +11,7 @@ namespace Soil;
 internal sealed class SoilPaths
 {
     public string CliEndpointPath { get; }
+    public string ComputerTokenPath => Path.Combine(Path.GetDirectoryName(CliEndpointPath)!, "computer.token");
     public SoilPaths(string endpoint) => CliEndpointPath = endpoint;
 }
 
