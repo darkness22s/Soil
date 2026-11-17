@@ -26,13 +26,16 @@ Cua Driver, maintained at https://github.com/trycua/cua in
 supported interactive desktop session**. Linux support assumes a compatible
 glibc-based distribution, X11/XWayland and AT-SPI 2 for accessibility.
 Soil's current default Windows guest is a compact Tiny Core Linux image
-(`vmlinuz64`, `core2.gz`, `soil.squashfs`), not a complete glibc
-desktop. Simply copying a Cua Driver executable into `core2.gz` would be a
-broken/nonlaunching installer and is deliberately avoided.
+(`vmlinuz64`, `core2.gz`, `soil.squashfs`). **Tiny Core itself does use
+glibc**, but we have not verified the specific bundled guest's glibc version,
+X11 server, AT-SPI session bus and shared library dependencies against a
+pinned upstream Cua Driver release. Copying the binary without verifying it
+would risk another installed-but-nonlaunching integration.
 
 To fully meet the requested **preloaded upstream Cua Driver in every VM**
-feature, the default guest image must first be replaced or extended with a
-supported glibc/X11/AT-SPI runtime. Then pin a verified Cua Driver release,
+feature, the actual bundled guest must first be audited for the driver's runtime
+requirements, then extended only with any missing X11/AT-SPI libraries or
+services. A full distribution replacement may not be necessary. Then pin a verified Cua Driver release,
 ship its actual MIT license text and dependency notices, provision an
 unprivileged guest daemon on *explicit VM start*, gate its MCP/IPC channel to
 the selected VM, and test screenshot, accessibility snapshot, click, text,
