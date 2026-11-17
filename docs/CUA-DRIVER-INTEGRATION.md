@@ -4,12 +4,12 @@
 
 The Windows Soil installer now **embeds an authentic upstream Cua Driver
 0.49.5 x86_64 ELF** and its MIT notice into the guest `core2.gz` at
-`/usr/local/bin/cua-driver`. The release archive is checksum pinned:
+`/bin/cua-driver`. The release archive is checksum pinned:
 `e01fe9dd44e6a7d2d8ac128737fb0204c6deb57929da6cc2871c049eda96f7dc`
 (https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.49.5).
 The actual upstream binary is downloaded **at build time only**, not on
 user devices. The license text is included at
-`/usr/local/share/doc/cua-driver/LICENSE.md` in the VM and bundled
+`/usr/share/doc/cua-driver/LICENSE.md` in the VM and bundled
 in the Windows installation. See `tools/soil-ci/fetch-cua-driver.sh`,
 `inject-native-guest.py`, `app/build.ps1` and both Windows workflows.
 
