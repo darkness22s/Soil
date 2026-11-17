@@ -47,7 +47,13 @@ internal static class SoilCli
             var baseUrl = endpoint.RootElement.GetProperty("url").GetString();
             if (string.IsNullOrWhiteSpace(baseUrl))
                 throw new InvalidOperationException("The Soil CLI endpoint file is invalid.");
-            using var client = new HttpClient { BaseAddress = new Uri(baseUrl) };
+            // Configure all HttpClient properties before the first request. Native app
+            // import needs enough time for file transfer, guest boot and launch.
+            using var client = new HttpClient
+            {
+                BaseAddress = new Uri(baseUrl),
+                Timeout = TimeSpan.FromMinutes(6)
+            };
             return RunCommand(client, args);
         }
         catch (Exception ex) when (ex is IOException or JsonException or HttpRequestException or
@@ -215,8 +221,6 @@ internal static class SoilCli
             return 2;
         }
 
-        // Boot/guest transfer may take longer than HttpClient's default 100s.
-        client.Timeout = Timeout.InfiniteTimeSpan;
         using var request = new HttpRequestMessage(HttpMethod.Post, basePath);
         request.Headers.TryAddWithoutValidation("X-Soil-Filename",
             Uri.EscapeDataString(Path.GetFileName(filePath)));
