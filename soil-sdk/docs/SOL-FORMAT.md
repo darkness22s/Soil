@@ -40,7 +40,7 @@ manager, menu or shell.
 |--------|------|-------|-------|
 | 0      | 4    | magic | `S0L1` |
 | 4      | 2    | format_version | `1` |
-| 6      | 2    | kind | 1 = webapp, 2 = installer, 3 = webapp+native |
+| 6      | 2    | kind | 1 = webapp, 2 = installer, 3 = webapp+native, 4 = native |
 | 8      | 4    | header_len | equals `payload_offset`; `128 + manifest_len` (manifest_len includes padding) |
 | 12     | 4    | manifest_len | bytes of manifest JSON plus space padding |
 | 16     | 8    | payload_offset | byte offset of squashfs payload; multiple of 512 |
@@ -74,12 +74,14 @@ All integers are unsigned little-endian. Readers must reject files where
 The squashfs root contains the app files exactly as authored, plus a copy of the
 manifest at `/manifest.json` (unpadded; the header copy is authoritative).
 
-* `entry` in the manifest points at the HTML entry, relative to payload root
+* `entry` points at the web HTML entry (kinds 1 and 3), or an executable
+  Linux entry (kind 4), relative to payload root
   (e.g. `web/index.html`).
 * `icon` points at a PNG, relative to payload root.
 * Symlinks and hardlinks are rejected by `soilmk pack` in v1 (keeps the payload
   sandbox and the mount semantics simple).
-* Executables (kind 2 and 3) must be listed in `exec` or `install.command`.
+* Web helpers (kind 3) use `exec`; installer hooks (kind 2) use
+  `install.command`; kind 4 launches its `entry` directly.
 
 ## Execution and lifecycle
 
@@ -90,7 +92,8 @@ manifest at `/manifest.json` (unpadded; the header copy is authoritative).
 3. Mounts the payload read-only with a loop device (`LO_FLAGS_AUTOCLEAR`) under a
    private directory in `/tmp` (requires the `sudo -n soil _mount` helper; Soil's
    `tc` user has passwordless sudo).
-4. Launches the runtime (`soil-app`) with the mount root and manifest.
+4. Launches `soil-app` for a web kind, or executes the native `entry`
+   directly for kind 4.
 5. When the window closes, unmounts (lazy) and releases the loop device.
 
 `soil install FILE.sol`:

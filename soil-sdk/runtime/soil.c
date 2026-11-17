@@ -385,12 +385,62 @@ static void free_manifest(jval *m)
     json_free(m);
 }
 
+/* Native packages launch a real Linux executable from the read-only SquashFS.
+ * The child inherits the user's display/session; app data stays writable.
+ * ELF interpreter and shared-library compatibility are guest responsibilities. */
+static int launch_native(const char *root, const char *data, const char *id,
+                         jval *manifest, int extra_argc, char **extra_argv)
+{
+    const char *entry = json_str_get(manifest, "entry");
+    if (!valid_rel(entry) || strchr(entry, '\\') || strchr(entry, ':')) {
+        fprintf(stderr, "soil: native package has an invalid entry path\n");
+        return 1;
+    }
+    char exe[PATH_MAX];
+    if (snprintf(exe, sizeof(exe), "%s/%s", root, entry) >= (int)sizeof(exe)) {
+        fprintf(stderr, "soil: native entry path too long\n");
+        return 1;
+    }
+    struct stat st;
+    if (lstat(exe, &st) != 0 || !S_ISREG(st.st_mode) || access(exe, X_OK) != 0) {
+        fprintf(stderr, "soil: native entry is missing or not executable: %s\n", entry);
+        return 1;
+    }
+
+    char *args[128];
+    int argc = 0;
+    args[argc++] = exe;
+    jval *defaults = json_obj_get(manifest, "args");
+    if (defaults && defaults->type == JSON_ARR) {
+        for (size_t i = 0; i < defaults->n; i++) {
+            if (defaults->items[i]->type != JSON_STR || argc >= 127) {
+                fprintf(stderr, "soil: invalid native default arguments\n");
+                return 1;
+            }
+            args[argc++] = defaults->items[i]->str;
+        }
+    }
+    if (extra_argc < 0 || extra_argc > 127 - argc) {
+        fprintf(stderr, "soil: too many native arguments\n");
+        return 1;
+    }
+    for (int i = 0; i < extra_argc; i++)
+        args[argc++] = extra_argv[i];
+    args[argc] = NULL;
+
+    setenv("SOIL_APP_ID", id, 1);
+    setenv("SOIL_DATA", data, 1);
+    setenv("SOIL_APPDIR", root, 1);
+    setenv("APPDIR", root, 1);
+    /* AppImages can extract their payload when the guest has no FUSE daemon. */
+    setenv("APPIMAGE_EXTRACT_AND_RUN", "1", 0);
+    return spawn_wait(args, root, NULL);
+}
+
 static int cmd_run(const char *file, int strict, int debug, int extra_argc, char **extra_argv)
 {
     sol_header h;
     jval *m = NULL;
-    (void)extra_argc;
-    (void)extra_argv;
     verify_package(file, &h, &m, strict);
 
     const char *id = json_str_get(m, "id");
@@ -442,7 +492,9 @@ static int cmd_run(const char *file, int strict, int debug, int extra_argc, char
         "--data", data,
         NULL
     };
-    int rc = spawn_wait(args, mnt, NULL);
+    int rc = h.kind == 4
+        ? launch_native(mnt, data, id, m, extra_argc, extra_argv)
+        : spawn_wait(args, mnt, NULL);
     umount_pkg(mnt);
     rm_rf(tmpdir);
     free_manifest(m);
@@ -490,7 +542,7 @@ static void desktop_escape(char *s)
 }
 
 static int write_desktop(const char *path, const char *name, const char *comment,
-                         const char *id, const char *icon, int exec_perm)
+                         const char *id, const char *icon, int exec_perm, int terminal)
 {
     FILE *f = fopen(path, "w");
     if (!f)
@@ -502,9 +554,9 @@ static int write_desktop(const char *path, const char *name, const char *comment
             "Comment=%s\n"
             "Exec=/usr/local/bin/soil launch %s\n"
             "Icon=%s\n"
-            "Terminal=false\n"
+            "Terminal=%s\n"
             "Categories=Soil;\n",
-            name, comment ? comment : "", id, icon);
+            name, comment ? comment : "", id, icon, terminal ? "true" : "false");
     fclose(f);
     if (exec_perm)
         chmod(path, 0755);
@@ -650,8 +702,9 @@ static int cmd_install(const char *file)
     char app_entry[PATH_MAX], desk_entry[PATH_MAX];
     snprintf(app_entry, sizeof(app_entry), "%s/soil-%s.desktop", appsdir, id);
     snprintf(desk_entry, sizeof(desk_entry), "%s/%s.desktop", deskdir, safe_name);
-    write_desktop(app_entry, safe_name, desc, id, iconpath, 0);
-    write_desktop(desk_entry, safe_name, desc, id, iconpath, 1);
+    int terminal = h.kind == 4 && json_bool_get(m, "terminal", 0);
+    write_desktop(app_entry, safe_name, desc, id, iconpath, 0, terminal);
+    write_desktop(desk_entry, safe_name, desc, id, iconpath, 1, terminal);
 
     if (installer) {
         jval *inst = json_obj_get(m, "install");

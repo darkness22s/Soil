@@ -1,0 +1,40 @@
+name: Native Linux SOL package tests
+
+on:
+  push:
+    paths:
+      - soil-sdk/**
+      - .github/workflows/native-package-tests.yml
+  pull_request:
+    paths:
+      - soil-sdk/**
+      - .github/workflows/native-package-tests.yml
+
+permissions:
+  contents: read
+
+jobs:
+  native-packaging:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Test native package acceptance, rejection and integrity
+        run: python3 -m unittest discover -s soil-sdk/tests -p test_native_packages.py -v
+      - name: Compile and unit-test Linux runtime
+        run: |
+          gcc -O2 -Wall -Wno-format-truncation -o /tmp/soil-cli soil-sdk/runtime/soil.c soil-sdk/runtime/sol.c soil-sdk/runtime/json.c soil-sdk/runtime/sha256.c
+          gcc -O2 -Wall -Wno-format-truncation -o /tmp/soil-core-test soil-sdk/runtime/test_core.c soil-sdk/runtime/sol.c soil-sdk/runtime/json.c soil-sdk/runtime/sha256.c
+          /tmp/soil-core-test
+      - name: Check real ELF header roundtrip with C Linux reader
+        run: |
+          set -eu
+          mkdir -p /tmp/soil-native-smoke
+          python3 soil-sdk/tools/soil.py native /bin/true --id org.soil.true --name True -o /tmp/soil-native-smoke/True.sol
+          /tmp/soil-cli info /tmp/soil-native-smoke/True.sol | grep -E 'kind: +4 \(native\)'
+          python3 soil-sdk/tools/soil.py verify /tmp/soil-native-smoke/True.sol
+          echo "Note: this validates packaging/runtime parsing, not in-guest GUI launch."

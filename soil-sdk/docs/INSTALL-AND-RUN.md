@@ -14,6 +14,14 @@ the file in the file manager: the image registers `.sol` as
 
 `SOIL_STRICT=1 soil run Hello.sol` refuses unsigned/untrusted packages.
 
+For a `native` package, `soil run Program.sol --flag` starts its Linux
+executable directly from the read-only SquashFS mount. It uses the existing
+X11 session for graphical apps, forwards explicit arguments after the filename,
+and sets `SOIL_DATA` to a writable app-data directory. Type 2 AppImages use
+`APPIMAGE_EXTRACT_AND_RUN=1` to avoid requiring a FUSE daemon. The app must
+still have a compatible dynamic linker and libraries in the Soil guest or
+inside its bundle.
+
 ## Install
 
 ```sh

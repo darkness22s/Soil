@@ -63,6 +63,17 @@ On first launch, machines from the legacy `%LOCALAPPDATA%\Boxify` store are
 imported into the new layout. The legacy folder is left in place. User machines
 and files are never removed by an upgrade or uninstall.
 
+## Native Linux `.sol` packages (SDK)
+
+The SDK also has `python soil-sdk/tools/soil.py native PATH` to wrap an
+x86_64 ELF, Type 2 AppImage, or prepared Linux AppDir into a signed `.sol`
+package with a native executable entry, no web UI required. See
+[`soil-sdk/docs/NATIVE-APPS.md`](soil-sdk/docs/NATIVE-APPS.md) for usage
+and library requirements. This is **separate** from the Windows UI's
+single-file VM importer below. Existing prebuilt guest images need the updated
+`soil-sdk/runtime/soil.c` CLI compiled and bundled before `kind: native`
+will execute inside them.
+
 ## Native Linux apps in the default Soil VM
 
 The **Windows desktop Soil app** boots a Tiny Core Linux guest from the

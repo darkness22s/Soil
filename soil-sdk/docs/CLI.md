@@ -48,10 +48,22 @@ URL.
 | `init DIR` | Scaffold an app (`--template vanilla`, `vite`, or `react-ts`). |
 | `dev DIR` | Serve a live preview, or start the configured/explicit frontend dev server. |
 | `build DIR` | Validate, pack and verify a package. Add `--sign KEY` to sign. |
-| `run DIR\|FILE.sol` | Build if needed, then invoke the Soil runtime. |
+| `native FILE\|APPDIR` | Package an existing Linux x86_64 executable/AppImage or native app directory (no web frontend). |\n| `run DIR\|FILE.sol` | Build if needed, then invoke the Soil runtime. |
 | `verify FILE.sol` | Check format, digest and signature. |
 | `keygen NAME` | Create `NAME.key.json` and `NAME.pub.pem`. |
 | `doctor [DIR]` | Check Python, signing, runtime and app manifest. |
+
+## Native Linux packages
+
+```sh
+python tools/soil.py native ./Editor.AppImage --id org.example.editor -o Editor.sol
+python tools/soil.py native ./Editor.AppDir --entry AppRun --terminal -o Editor.sol
+```
+
+The resulting `kind: native` package launches a Linux executable directly from
+its SquashFS mount; run it in Soil with `soil run Editor.sol`. Test the actual
+program and all shared libraries on the target guest. This command does not
+convert `.deb` or `.rpm` dependencies. See `docs/NATIVE-APPS.md`.
 
 ## Frontend build tools
 

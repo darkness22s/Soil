@@ -1,6 +1,6 @@
 ---
 name: soil-app-builder
-description: Build, package and sign single-file Soil web apps (.sol) with the Soil SDK. Load when creating or modifying a Soil app, writing its soil.json manifest, using the window.soil bridge (store, dialogs, clipboard, notify, exec), signing packages, or debugging packaging/runtime issues.
+description: Build, package and sign single-file Soil web or native Linux apps (.sol) with the Soil SDK. Load when creating or modifying a Soil app, writing its soil.json manifest, using the window.soil bridge (store, dialogs, clipboard, notify, exec), signing packages, or debugging packaging/runtime issues.
 ---
 
 # Soil App Builder
@@ -28,8 +28,14 @@ Soil WebKitGTK runtime. No Node or Chromium is shipped in the app.
 2. **Edit `soil.json`** (schema: `schema/soil.schema.json`)
 
    Required: `schema: 1`, `id` (`^[a-z0-9][a-z0-9._-]{1,63}$`), `name`, semver
-   `version`, `kind` (`webapp` | `webapp+native` | `installer`), `entry` (except
+   `version`, `kind` (`webapp` | `webapp+native` | `installer` | `native`), `entry` (except
    installer), `icon`.
+
+   To package a **real Linux executable or AppDir**, skip the web UI and run:
+   `python tools/soil.py native ./Program.AppImage --id org.example.program -o Program.sol`.
+   For a bundled application directory, use `native ./Program.AppDir --entry AppRun`.
+   Verify launch and library compatibility **inside the Soil Linux guest**.
+   `.deb` and `.rpm` are not executable binaries (see `docs/NATIVE-APPS.md`).
 
    Set only the permissions you use. Each ungranted call rejects.
 

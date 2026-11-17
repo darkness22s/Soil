@@ -35,6 +35,19 @@ The test binary covers SHA-256 vectors, JSON escape/round-trip/rejection, header
 validation, manifest parsing and digest/signature verification. It exits non-zero
 on the first failure.
 
+## Native Linux package checks
+
+```sh
+python3 -m unittest discover -s tests -p test_native_packages.py -v
+gcc -O2 -o /tmp/soil-cli runtime/soil.c runtime/sol.c runtime/json.c runtime/sha256.c
+python3 tools/soil.py native /bin/true --id org.soil.true -o /tmp/True.sol
+/tmp/soil-cli info /tmp/True.sol
+```
+
+These confirm native package creation and C header parsing. Mounting and
+launching a graphical Linux application inside the bundled guest still needs
+a real guest smoke test with the rebuilt Linux runtime.
+
 ## In-image checks (Soil VM)
 
 The shipped image contains `Hello.sol`, signed by the demo key whose public key
