@@ -424,6 +424,9 @@ public sealed class VmManager
     internal async Task WaitForNativeGuestReadyAsync(string machineId, CancellationToken ct)
     {
         var deadline = DateTime.UtcNow.AddSeconds(90);
+        var sshReadyAt = DateTime.MinValue;
+        var attemptedRecovery = false;
+        string? recoveryError = null;
         while (DateTime.UtcNow < deadline)
         {
             ct.ThrowIfCancellationRequested();
@@ -433,18 +436,38 @@ public sealed class VmManager
                     "The Soil VM stopped before its Linux desktop was ready.");
 
             var endpoint = GetSshEndpoint(machineId);
-            if (endpoint is { } ssh &&
-                // A live SSH tunnel is not proof that a desktop exists.
-                await RunGuestCommandAsync(
+            if (endpoint is { } ssh)
+            {
+                // SSH is not enough: the real desktop must accept X11 requests.
+                if (await RunGuestCommandAsync(
                     ssh.Port, ssh.Key, "DISPLAY=:0 xset q >/dev/null 2>&1", 5, ct))
-                return;
+                    return;
+                if (sshReadyAt == DateTime.MinValue &&
+                    await RunGuestCommandAsync(ssh.Port, ssh.Key, "true", 4, ct))
+                    sshReadyAt = DateTime.UtcNow;
+                // Give normal graphics startup a chance, then recover through
+                // the tested, preloaded Xorg dummy backend exactly once.
+                if (!attemptedRecovery && sshReadyAt != DateTime.MinValue &&
+                    DateTime.UtcNow - sshReadyAt >= TimeSpan.FromSeconds(5))
+                {
+                    attemptedRecovery = true;
+                    var recovered = await RunGuestCommandDetailedAsync(
+                        ssh.Port, ssh.Key,
+                        "test -x /bin/soil-ensure-desktop && /bin/soil-ensure-desktop",
+                        38, ct);
+                    if (recovered.Success && await RunGuestCommandAsync(
+                        ssh.Port, ssh.Key, "DISPLAY=:0 xset q >/dev/null 2>&1", 5, ct))
+                        return;
+                    recoveryError = recovered.Details;
+                }
+            }
             await Task.Delay(1000, ct);
         }
         throw new InvalidOperationException(
             "The Soil Linux graphical desktop (X11 display :0) did not become ready " +
-            "within 90 seconds. The VM or SSH may have started without a usable " +
-            "desktop. Check the VM screen and guest startup before retrying the " +
-            "existing imported app; do not upload another copy.");
+            "within 90 seconds. The VM's Xorg software desktop could not start. " +
+            "Check guest /tmp/soil-xorg.log and retry the saved app rather than " +
+            "uploading it again. " + recoveryError);
     }
 
     // Authenticated host-to-guest adapter for the genuine bundled open-source
