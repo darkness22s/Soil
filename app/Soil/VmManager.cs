@@ -452,6 +452,48 @@ public sealed class VmManager
             "existing imported app; do not upload another copy.");
     }
 
+    // Authenticated host-to-guest adapter for the genuine bundled open-source
+    // Cua Driver CLI. The agent never receives the VM SSH private key or a
+    // guest-accessible network port.
+    internal async Task<string> CallGuestCuaDriverAsync(
+        string machineId, string tool, JsonElement args, CancellationToken ct)
+    {
+        if (args.ValueKind != JsonValueKind.Object)
+            throw new ArgumentException("Cua Driver tool arguments must be a JSON object.");
+        if (!new[]
+            {
+                "get_desktop_state", "get_window_state", "list_apps", "click",
+                "double_click", "move_cursor", "scroll", "type_text",
+                "press_key", "get_cursor_position"
+            }.Contains(tool, StringComparer.Ordinal))
+            throw new ArgumentException("Unsupported Cua Driver tool: " + tool);
+
+        await WaitForNativeGuestReadyAsync(machineId, ct);
+        var endpoint = GetSshEndpoint(machineId)
+            ?? throw new InvalidOperationException("Selected VM has no live guest SSH tunnel.");
+        var (_, key, port) = endpoint.Value;
+        // This is the pinned upstream binary embedded by the Windows installer.
+        // Disable the upstream default telemetry before ever starting its daemon.
+        var setup = "command -v cua-driver >/dev/null 2>&1 && " +
+                    "cua-driver telemetry disable >/dev/null 2>&1 && " +
+                    "(cua-driver status >/dev/null 2>&1 || " +
+                    "(nohup cua-driver serve >/tmp/soil-cua-driver.log 2>&1 </dev/null & " +
+                    "sleep 2; cua-driver status >/dev/null 2>&1))";
+        var ready = await RunGuestCommandDetailedAsync(port, key, setup, 20, ct);
+        if (!ready.Success)
+            throw new InvalidOperationException(
+                "The preloaded Cua Driver is missing or its daemon could not start. " +
+                "Verify the VM graphical desktop, the bundled core2.gz and the driver log. " +
+                ready.Details);
+        var command = "DISPLAY=:0 cua-driver call " + ShellQuote(tool) +
+                      " " + ShellQuote(args.GetRawText());
+        var result = await RunGuestCommandDetailedAsync(port, key, command, 50, ct);
+        if (!result.Success)
+            throw new InvalidOperationException(
+                "Upstream Cua Driver call failed: " + result.Details);
+        return result.Details;
+    }
+
     internal async Task DeployNativeLinuxAppAsync(
         string machineId, string appId, string filePath, string displayName,
         bool launch, CancellationToken ct)
@@ -629,12 +671,20 @@ public sealed class VmManager
                 "Guest command timed out after " + timeoutSeconds + " seconds.");
         }
         // Failed SSH/guest commands usually report the useful cause on stderr.
-        var details = stderr.Result.Trim();
+        // For successful upstream Cua queries, preserve the full structured
+        // tool response (which may contain base64 image data). On failure,
+        // prefer bounded stderr diagnostics rather than hiding the real cause.
+        var success = ssh.ExitCode == 0;
+        var details = success ? stdout.Result.Trim() : stderr.Result.Trim();
         if (string.IsNullOrWhiteSpace(details))
-            details = stdout.Result.Trim();
-        if (details.Length > 1500)
+            details = success ? stderr.Result.Trim() : stdout.Result.Trim();
+        if (details.Length > (success ? 12_000_000 : 1500))
+        {
+            if (success)
+                throw new InvalidOperationException("Cua Driver response exceeds 12 MB.");
             details = details[..1500] + "...";
-        return new GuestCommandResult(ssh.ExitCode == 0, details);
+        }
+        return new GuestCommandResult(success, details);
     }
 
     private static string ShellQuote(string value) =>
