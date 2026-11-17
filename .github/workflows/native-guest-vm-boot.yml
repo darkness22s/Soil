@@ -4,7 +4,9 @@ on:
   pull_request:
     paths:
       - 'app/images/**'
-      - 'soil-sdk/runtime/soil-native'
+      - 'soil-sdk/runtime/**'
+      - 'soil-sdk/tools/**'
+      - 'tools/soil-ci/build-guest-cli.sh'
       - 'tools/soil-ci/guest-native-smoke.sh'
       - 'tools/soil-ci/GuestInitrdSmoke/**'
       - 'tools/soil-ci/inject-native-guest.py'
@@ -17,7 +19,7 @@ permissions:
 jobs:
   guest-native-boot:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,6 +31,6 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install QEMU x86 emulator
-        run: sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qemu-system-x86 gcc
-      - name: Boot actual packaged Linux guest and exercise native ELF lifecycle
+        run: sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qemu-system-x86 gcc musl-tools
+      - name: Boot actual bundled Linux guest and run native ELF plus .sol package lifecycle
         run: bash tools/soil-ci/guest-native-smoke.sh app/images
