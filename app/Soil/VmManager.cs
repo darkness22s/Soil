@@ -471,7 +471,7 @@ public sealed class VmManager
         await WaitForNativeGuestReadyAsync(machineId, ct);
         var endpoint = GetSshEndpoint(machineId)
             ?? throw new InvalidOperationException("Selected VM has no live guest SSH tunnel.");
-        var (_, key, port) = endpoint.Value;
+        var (_, key, port) = endpoint;
         // This is the pinned upstream binary embedded by the Windows installer.
         // Disable the upstream default telemetry before ever starting its daemon.
         var setup = "command -v cua-driver >/dev/null 2>&1 && " +
