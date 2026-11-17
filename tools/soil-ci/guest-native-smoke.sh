@@ -176,10 +176,6 @@ if [[ -n "${SOIL_CUA_DRIVER_ARCHIVE:-}" ]]; then
   # Guest images must not send telemetry. Disable before starting the daemon.
   ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 /tmp/cua-driver telemetry disable"
   ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 /tmp/cua-driver doctor"
-  # Actually drive the upstream MCP-capable runtime, not just its --version.
-  ssh "${ssh_opts[@]}" tc@127.0.0.1 \
-    "DISPLAY=:0 nohup /tmp/cua-driver serve >/tmp/cua-driver.log 2>&1 </dev/null &"
-  sleep 3
   echo "PROBE: actual guest desktop/server diagnostics"
   ssh "${ssh_opts[@]}" tc@127.0.0.1 \
     "ps w; ls -la /tmp/.X11-unix /tmp/.X0-lock /dev/fb0 2>&1 || true; \
@@ -208,6 +204,22 @@ if [[ -n "${SOIL_CUA_DRIVER_ARCHIVE:-}" ]]; then
       done
     fi
     if [[ "$gui_ready" != 1 ]]; then
+      echo "PROBE: the guest framebuffer device is unavailable; test Xvfb offscreen X11"
+      ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+        "nohup Xvfb :0 -screen 0 1360x768x24 -nolisten tcp >/tmp/soil-xvfb.log 2>&1 </dev/null &" || true
+      for attempt in $(seq 1 12); do
+        if ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+          "DISPLAY=:0 xset q >/dev/null 2>&1"; then gui_ready=1; break; fi
+        sleep 1
+      done
+      if [[ "$gui_ready" == 1 ]]; then
+        ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+          "DISPLAY=:0 nohup fluxbox >/tmp/soil-fluxbox.log 2>&1 </dev/null &" || true
+        ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+          "DISPLAY=:0 nohup pcmanfm --desktop >/tmp/soil-pcmanfm.log 2>&1 </dev/null &" || true
+      fi
+    fi
+    if [[ "$gui_ready" != 1 ]]; then
       ssh "${ssh_opts[@]}" tc@127.0.0.1 \
         "tail -n 100 /tmp/soil-startx.log /tmp/soil-xfbdev.log; \
          ls -la /tmp/.X11-unix; ps w | grep -E 'Xorg|Xfbdev|fluxbox' || true" || true
@@ -216,6 +228,11 @@ if [[ -n "${SOIL_CUA_DRIVER_ARCHIVE:-}" ]]; then
     fi
   fi
   echo "PROBE: X11 server is reachable on DISPLAY=:0"
+  # Start Cua only after X is usable. The daemon initializes its capture
+  # backend at startup and does not necessarily recover from a missing X socket.
+  ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+    "DISPLAY=:0 nohup /tmp/cua-driver serve >/tmp/cua-driver.log 2>&1 </dev/null &"
+  sleep 3
   if ! ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 /tmp/cua-driver status"; then
     ssh "${ssh_opts[@]}" tc@127.0.0.1 "tail -n 70 /tmp/cua-driver.log" || true
     echo "Cua Driver did not serve inside the guest" >&2
