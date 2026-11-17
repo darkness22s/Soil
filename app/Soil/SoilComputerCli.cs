@@ -219,6 +219,14 @@ internal static class SoilComputerCli
                         doc.RootElement.EnumerateObject().Where(p => p.Name != "vm_id")
                             .ToDictionary(p => p.Name, p => p.Value.Clone()));
                     content.Add(new { type = "text", text = Action(client, paths, vmId, action).GetRawText() });
+                    // Return a fresh observation with every action, as in CUA
+                    // screenshot-action-verify loops. The agent can compare
+                    // successive images rather than assuming input succeeded.
+                    Thread.Sleep(150);
+                    content.Add(new {
+                        type = "image", mimeType = "image/jpeg",
+                        data = Convert.ToBase64String(Capture(client, paths, vmId))
+                    });
                     break;
                 }
                 default: throw new ArgumentException("Unknown Soil computer tool: " + name);
