@@ -1830,6 +1830,8 @@ public sealed class VmManager
             (port <= 0 || string.IsNullOrWhiteSpace(key) || !File.Exists(key)))
         {
             var boot = Stopwatch.StartNew();
+            var recoveryAttempted = false;
+            string? recoveryError = null;
             while (boot.Elapsed < TimeSpan.FromSeconds(90))
             {
                 ct.ThrowIfCancellationRequested();
@@ -1837,15 +1839,42 @@ public sealed class VmManager
                     return;
                 if (HasVisibleContent(bootView))
                     return;
-                await Task.Delay(50, ct);
+                // If no guest framebuffer is registered, the original GUI
+                // cannot draw into Soil's host display. The tested Xorg dummy
+                // backend still gives Cua Driver and native apps a full X11
+                // desktop. Never mark the VM running based on SSH alone.
+                if (port > 0 && File.Exists(key) &&
+                    boot.Elapsed > TimeSpan.FromSeconds(8))
+                {
+                    if (await RunGuestCommandAsync(
+                        port, key, "DISPLAY=:0 xset q >/dev/null 2>&1", 3, ct))
+                        return;
+                    if (!recoveryAttempted &&
+                        await RunGuestCommandAsync(port, key, "true", 3, ct))
+                    {
+                        recoveryAttempted = true;
+                        var result = await RunGuestCommandDetailedAsync(
+                            port, key,
+                            "test -x /bin/soil-ensure-desktop && /bin/soil-ensure-desktop",
+                            38, ct);
+                        if (result.Success && await RunGuestCommandAsync(
+                            port, key, "DISPLAY=:0 xset q >/dev/null 2>&1", 5, ct))
+                            return;
+                        recoveryError = result.Details;
+                    }
+                }
+                await Task.Delay(200, ct);
             }
-            throw new TimeoutException("The guest did not draw a desktop frame.");
+            throw new TimeoutException(
+                "The guest did not draw a desktop frame or provide a working X11 " +
+                "software display. Check /tmp/soil-xorg.log. " + recoveryError);
         }
 
         const string probe =
             "DISPLAY=:0 xset q >/dev/null 2>&1 && " +
             "ps w | grep -q '[p]cmanfm' && ps w | grep -q '[f]luxbox'";
         var ready = Stopwatch.StartNew();
+        var recoveryAttemptedForAgent = false;
         while (ready.Elapsed < TimeSpan.FromSeconds(150))
         {
             ct.ThrowIfCancellationRequested();
@@ -1857,9 +1886,19 @@ public sealed class VmManager
                 if (await RunGuestCommandAsync(port, key, probe, 8, ct))
                     return;
             }
+            if (!recoveryAttemptedForAgent &&
+                ready.Elapsed >= TimeSpan.FromSeconds(8) &&
+                await RunGuestCommandAsync(port, key, "true", 4, ct))
+            {
+                recoveryAttemptedForAgent = true;
+                await RunGuestCommandAsync(port, key,
+                    "test -x /bin/soil-ensure-desktop && /bin/soil-ensure-desktop", 38, ct);
+            }
             await Task.Delay(1000, ct);
         }
-        throw new TimeoutException("The desktop did not finish starting.");
+        throw new TimeoutException(
+            "The Linux desktop did not finish starting, including the Xorg " +
+            "software fallback. Check the guest /tmp/soil-xorg.log.");
     }
 
     private static bool HasVisibleContent(MemoryMappedViewAccessor view)
