@@ -220,7 +220,10 @@ def verify(image: Path, launcher: Path, runtime: Path | None = None,
             (XORG_CONFIG_PATH, dummy_config),
             (XORG_ENSURE_PATH, desktop_ensure),
         ):
-            if file is None or path.encode() + b"\0" not in payload or file.read_bytes() not in payload:
+            if file is None or path.encode() + b"\0" not in payload or (
+                    file.read_bytes().replace(b"\r\n", b"\n")
+                    if path == XORG_ENSURE_PATH else file.read_bytes()
+                ) not in payload:
                 raise ValueError(f"Bundled Xorg virtual desktop file is missing: {path}")
     if len(payload) <= 65536:
         raise ValueError("The bundled guest image is unexpectedly small.")
