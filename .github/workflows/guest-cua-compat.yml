@@ -1,0 +1,44 @@
+name: Probe upstream Cua Driver in Soil's bundled Linux guest
+
+on:
+  pull_request:
+    paths:
+      - 'tools/soil-ci/guest-native-smoke.sh'
+      - '.github/workflows/guest-cua-compat.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-cua-driver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    # This probe is deliberately non-blocking until required guest dependencies
+    # have been identified and included in Soil's bundled image.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install guest boot dependencies
+        run: sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qemu-system-x86 gcc musl-tools busybox-static
+      - name: Fetch pinned, verified upstream MIT Cua Driver release
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error \
+            "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.49.5/cua-driver-rs-0.49.5-linux-x86_64-binary.tar.gz" \
+            -o "$RUNNER_TEMP/cua-driver.tar.gz"
+          echo "e01fe9dd44e6a7d2d8ac128737fb0204c6deb57929da6cc2871c049eda96f7dc  $RUNNER_TEMP/cua-driver.tar.gz" | sha256sum -c -
+      - name: Boot actual guest and run upstream driver doctor
+        shell: bash
+        env:
+          SOIL_CUA_DRIVER_ARCHIVE: ${{ runner.temp }}/cua-driver.tar.gz
+        run: bash tools/soil-ci/guest-native-smoke.sh app/images
