@@ -32,6 +32,10 @@ jobs:
           node --check app/Soil/ui/github-ui.js
       - name: VM lifecycle and GitHub UI regression tests
         run: node --test tests/sol-regressions.test.cjs
+      - name: Linux app import and skill UI tests
+        run: |
+          node --check app/Soil/ui/native-ui.js
+          node --test tools/soil-ci/native-ui.test.mjs tools/soil-ci/skill-ui.test.mjs
 
   windows-compile:
     runs-on: windows-latest
