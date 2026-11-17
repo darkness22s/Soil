@@ -418,6 +418,35 @@ public sealed class VmManager
             "Could not install and launch the app package in the machine.");
     }
 
+    // Used only after the user explicitly chooses to launch an imported app.
+    // Starting a VM is asynchronous, and an allocated SSH port does not mean the
+    // minimal guest has finished booting yet.
+    internal async Task WaitForNativeGuestReadyAsync(string machineId, CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(90);
+        while (DateTime.UtcNow < deadline)
+        {
+            ct.ThrowIfCancellationRequested();
+            var state = Get(machineId);
+            if (state is null || state.Status is "stopped" or "failed")
+                throw new InvalidOperationException(
+                    "The Soil VM stopped before its Linux desktop was ready.");
+
+            var endpoint = GetSshEndpoint(machineId);
+            if (endpoint is { } ssh)
+            {
+                // Check the transport BEFORE copying a potentially large app.
+                if (await RunGuestCommandAsync(ssh.Port, ssh.Key, "true", 5, ct))
+                    return;
+            }
+            await Task.Delay(1000, ct);
+        }
+
+        throw new InvalidOperationException(
+            "The Soil Linux desktop did not become ready within 90 seconds. " +
+            "Check the VM screen and the bundled guest image, then retry Launch.");
+    }
+
     internal async Task DeployNativeLinuxAppAsync(
         string machineId, string appId, string filePath, string displayName,
         bool launch, CancellationToken ct)
