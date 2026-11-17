@@ -35,7 +35,16 @@ The command streams the local file and reports `vmId`, `vmName`, `appId`, `appNa
 
 **UI alternative:** In the Windows Soil app, select the desktop VM → **Linux apps** → **Import & Launch**, or drop an AppImage/ELF onto the dialog. Soil starts the VM if needed. Do not tell the user to manually SSH, click Start, or move files into the guest.
 
-**Error handling:** If Soil isn't open, open it first. If there are zero/multiple suitable VMs, use the user's selected desktop VM or ask before choosing. If SSH/guest readiness times out, inspect the VM and bundled image before retrying `vm app launch` with the saved ID. Do not assume launching succeeded when the CLI reports an error. Only run apps the user explicitly approves and trusts.
+### Recovery playbook (agents must use this instead of improvising)
+
+- **Before retrying any failed install**, use `& $soil vm app list --vm '<vm-id>'`. If the imported app is listed, **do not upload another copy**. Launch the listed `appId` with `& $soil vm app launch '<app-id>' --vm '<vm-id>'`. If absent, retry installation once after correcting the reported issue.
+- **`This instance has already started one or more requests. Properties can only be modified before sending the first request.`** is a bug in older Soil installers (the CLI changed `HttpClient.Timeout` too late), **not a Linux error**. Install a rebuilt Soil version containing the fix and rerun once; repeating the command in the same old executable cannot help. Do not attempt manual SSH, patch API files, or fake success.
+- **An app is saved but guest launch fails (HTTP 409):** Soil now relays the guest's actual startup error if available. Report that error clearly. If it says missing shared libraries, incompatible AppImage runtime or executable format, explain that the compact guest cannot execute this app as-is; do not pretend it launched and do not silently fetch libraries or install a different OS. Ask for a compatible standalone build if needed.
+- **SSH unavailable or guest readiness timeout:** inspect `& $soil vm list`, check the selected VM, and retry `vm app launch` **once** using the existing app ID after the guest becomes ready. Do not create extra VMs, change firmware, or repeatedly reinstall the app.
+- **No matching desktop VM / multiple choices:** use the user-selected VM ID; ask if the intended destination is ambiguous. **File rejected:** only native x86-64 Type 2 AppImage or ELF, max 256 MiB. Never describe a `.deb`/`.rpm` upload as a working installation.
+- **Success response vs. actual execution:** CLI `status: launched` means the guest launcher returned successfully after a short startup check, **not** that a GUI window was rendered. Verify on the VM screen when possible. If it never appears, say so and report the missing verification rather than claiming the problem is solved.
+
+If Soil isn't open, open it first. Only run executables the user explicitly approves and trusts. Retry only after understanding the actual error and avoid changing guest internals as a workaround.
 
 ## Linux: shortest agent workflow
 
