@@ -19,6 +19,8 @@ from pathlib import Path
 MAGIC = (b"070701", b"070702")
 GUEST_PATH = "bin/soil-native"
 SOL_GUEST_PATH = "bin/soil"
+CUA_DRIVER_PATH = "usr/local/bin/cua-driver"
+CUA_LICENSE_PATH = "usr/local/share/doc/cua-driver/LICENSE.md"
 
 
 def align4(data: bytes) -> bytes:
@@ -52,13 +54,32 @@ def validate_runtime(binary: bytes) -> None:
             raise ValueError("Soil guest runtime must be statically linked (PT_INTERP found).")
 
 
-def create_overlay(script: bytes, runtime: bytes | None = None) -> bytes:
+def validate_cua_driver(binary: bytes) -> None:
+    """Accept only a real Linux x86_64 ELF executable, not a script or downloader."""
+    if (not 65536 <= len(binary) <= 150 * 1024 * 1024 or
+            binary[:6] != b"\x7fELF\x02\x01" or binary[18:20] != b"\x3e\x00"):
+        raise ValueError("Cua Driver must be a Linux x86_64 ELF executable.")
+    phoff = struct.unpack_from("<Q", binary, 32)[0]
+    phentsize, phnum = struct.unpack_from("<HH", binary, 54)
+    if phentsize < 56 or not phnum or phoff + phentsize * phnum > len(binary):
+        raise ValueError("Cua Driver ELF program headers are invalid.")
+
+
+def create_overlay(script: bytes, runtime: bytes | None = None,
+                   cua_driver: bytes | None = None,
+                   cua_license: bytes | None = None) -> bytes:
     if not script.startswith(b"#!/bin/sh\n"):
         raise ValueError("The guest launcher must be a POSIX shell script.")
     overlay = newc_entry(GUEST_PATH, script, stat.S_IFREG | 0o755, 91001)
     if runtime is not None:
         validate_runtime(runtime)
         overlay += newc_entry(SOL_GUEST_PATH, runtime, stat.S_IFREG | 0o755, 91003)
+    if cua_driver is not None:
+        validate_cua_driver(cua_driver)
+        if not cua_license or b"MIT License" not in cua_license:
+            raise ValueError("The Cua Driver MIT license must be supplied.")
+        overlay += newc_entry(CUA_DRIVER_PATH, cua_driver, stat.S_IFREG | 0o755, 91004)
+        overlay += newc_entry(CUA_LICENSE_PATH, cua_license, stat.S_IFREG | 0o644, 91005)
     return overlay + newc_entry("TRAILER!!!", b"", 0, 91002)
 
 
@@ -98,7 +119,8 @@ def check_archive(cpio: bytes) -> None:
         raise ValueError("Source initramfs lacks the cpio trailer.")
 
 
-def inject(source: Path, destination: Path, launcher: Path, runtime: Path | None = None) -> None:
+def inject(source: Path, destination: Path, launcher: Path, runtime: Path | None = None,
+           cua: Path | None = None, cua_license: Path | None = None) -> None:
     if source.stat().st_size < 65536:
         raise ValueError("The source core2.gz is missing (or is a Git LFS pointer).")
     contents = gzip.decompress(source.read_bytes())
@@ -106,9 +128,14 @@ def inject(source: Path, destination: Path, launcher: Path, runtime: Path | None
         raise ValueError("The initramfs already contains soil-native; supply unmodified image sources.")
     if runtime is not None and SOL_GUEST_PATH.encode() + b"\0" in contents:
         raise ValueError("The initramfs already contains the Soil SDK runtime.")
+    if cua is not None and CUA_DRIVER_PATH.encode() + b"\0" in contents:
+        raise ValueError("The initramfs already contains Cua Driver.")
     check_archive(contents)
     binary = runtime.read_bytes() if runtime is not None else None
-    overlay = create_overlay(launcher.read_bytes().replace(b"\r\n", b"\n"), binary)
+    cua_binary = cua.read_bytes() if cua is not None else None
+    license_bytes = cua_license.read_bytes() if cua_license is not None else None
+    overlay = create_overlay(launcher.read_bytes().replace(b"\r\n", b"\n"),
+                             binary, cua_binary, license_bytes)
     # Each cpio archive must start on a 4-byte boundary.
     image = contents + b"\0" * ((-len(contents)) % 4) + overlay
     output = gzip.compress(image, compresslevel=6, mtime=0)
@@ -124,7 +151,8 @@ def inject(source: Path, destination: Path, launcher: Path, runtime: Path | None
     print(f"Embedded native Linux launcher in {destination} ({len(output)} bytes)")
 
 
-def verify(image: Path, launcher: Path, runtime: Path | None = None) -> None:
+def verify(image: Path, launcher: Path, runtime: Path | None = None,
+           cua: Path | None = None, cua_license: Path | None = None) -> None:
     payload = gzip.decompress(image.read_bytes())
     script = launcher.read_bytes().replace(b"\r\n", b"\n")
     if (GUEST_PATH.encode() + b"\0" not in payload or script not in payload):
@@ -134,6 +162,15 @@ def verify(image: Path, launcher: Path, runtime: Path | None = None) -> None:
         validate_runtime(binary)
         if SOL_GUEST_PATH.encode() + b"\0" not in payload or binary not in payload:
             raise ValueError("The bundled image does not contain the required static Soil SDK runtime.")
+    if cua is not None:
+        driver = cua.read_bytes()
+        validate_cua_driver(driver)
+        license_bytes = cua_license.read_bytes() if cua_license is not None else b""
+        if (CUA_DRIVER_PATH.encode() + b"\0" not in payload or
+                driver not in payload or
+                CUA_LICENSE_PATH.encode() + b"\0" not in payload or
+                license_bytes not in payload):
+            raise ValueError("Bundled guest Cua Driver or MIT notice is missing.")
     if len(payload) <= 65536:
         raise ValueError("The bundled guest image is unexpectedly small.")
     print(f"Verified native launcher and Soil SDK runtime in {image}")
@@ -147,12 +184,20 @@ def main() -> None:
                         "soil-sdk" / "runtime" / "soil-native")
     parser.add_argument("--runtime", type=Path,
                         help="Static x86_64 Linux ELF produced by build-guest-cli.sh")
+    parser.add_argument("--cua-driver", type=Path,
+                        help="Verified upstream Linux x86_64 Cua Driver binary")
+    parser.add_argument("--cua-license", type=Path,
+                        help="Bundled upstream MIT license for the Cua Driver")
     parser.add_argument("--verify", action="store_true", help="Verify a patched core2.gz")
     args = parser.parse_args()
+    if (args.cua_driver is None) != (args.cua_license is None):
+        parser.error("--cua-driver and --cua-license must be used together")
     if args.verify:
-        verify(args.source, args.launcher, args.runtime)
+        verify(args.source, args.launcher, args.runtime, args.cua_driver,
+               args.cua_license)
     else:
-        inject(args.source, args.destination, args.launcher, args.runtime)
+        inject(args.source, args.destination, args.launcher, args.runtime,
+               args.cua_driver, args.cua_license)
 
 
 if __name__ == "__main__":
