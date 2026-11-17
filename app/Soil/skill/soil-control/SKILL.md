@@ -7,13 +7,40 @@ description: Install/import real Linux AppImage or ELF apps into Soil desktop VM
 
 **When asked to install/import/run a Linux application in a Soil VM, use `Soil.exe vm app install` first.** For screen automation on a Linux host use `soil computer`; for VM control on Windows use `Soil.exe vm`. Soil must be open. Only operate VMs the user selected; don't start one just to inspect it.
 
+## Windows: built-in per-VM computer-use tools (MCP + CLI)
+
+**Use these to operate the actual Soil VM desktop after import/launch.** The tools are built into Soil and ready for every desktop VM; there is no second guest download, no manual SSH, and no long-running agent process in a stopped VM. They use the host-side framebuffer and PS/2 transport. This is **not the upstream trycua Cua Driver binary running in Tiny Core** (the upstream Linux driver requires a compatible glibc/X11/AT-SPI desktop, which Soil's compact guest does not provide). Do not misrepresent the bridge as native Cua accessibility-tree or background-window automation.
+
+For a local agent supporting **MCP**, register the installed Soil executable as a stdio server. In Codex, run:
+
+```powershell
+$soil = (Get-Process -Name Soil | Select-Object -First 1 -ExpandProperty Path)
+codex mcp add soil-vm-computer -- "$soil" vm computer mcp
+```
+
+For other MCP-capable agents, register command `<absolute-path-to-Soil.exe>`, arguments `vm computer mcp`, transport `stdio`. Restart or reconnect the agent if it caches MCP servers. The server exposes `soil_list_vms`, `soil_vm_screenshot`, and `soil_vm_action`. The screenshot is returned as an **image in the tool result**, not an invented text description. An action result `{"ok":true}` means input was delivered, **not** that the GUI did what was intended.
+
+Shell-based agents can use the same VM surfaces without MCP:
+
+```powershell
+& $soil vm list
+& $soil vm computer screenshot '<vm-id>' "$env:TEMP\soil-screen.jpg"
+& $soil vm computer action '<vm-id>' '{"action":"click","x":450,"y":300}'
+& $soil vm computer action '<vm-id>' '{"action":"type","text":"hello world"}'
+& $soil vm computer action '<vm-id>' '{"action":"key","key":"ctrl+a"}'
+```
+
+**Computer-use workflow:** (1) list VMs; (2) use the user-selected VM ID; (3) confirm status `running` (ask before starting stopped VMs unless launch was explicitly requested); (4) screenshot and inspect the current GUI; (5) send one action; (6) screenshot again and confirm the intended change. Repeat only while evidence improves. The fixed 1360×768 screenshot coordinates are relative to the original image. `click`, `double_click`, `move` take `x,y`; `key` takes a key name or modifier shortcut (e.g. `ctrl+a`); `type` supports plain ASCII keyboard characters up to 4096. Scroll, drag, accessibility element trees, background window targeting, and arbitrary Unicode typing are **not available in this bridge**. PS/2 pointer movement is relative and may be affected by guest acceleration; inspect a fresh screenshot after every click. Never infer that an app launched only because an install returned success.
+
+Computer API endpoints are on Soil's local loopback server: `GET /api/vms/{id}/computer/screenshot` (JPEG), `POST /api/vms/{id}/computer/action` (JSON), and `GET /api/vms/{id}/computer` (capabilities). They require the Soil-local bearer token stored in the protected Soil keys folder; **do not echo it, log it, or transmit it off-device.** Prefer the CLI or MCP, which handle authentication.
+
 ## Install a Linux app into a Soil VM — the normal agent workflow (Windows host)
 
 **One command does the work.** No SSH commands, guest filesystem copying, API requests, VM boot orchestration, package conversions or terminal setup. Soil imports the file into persistent per-VM storage, starts the selected desktop VM *only because installation-and-launch was requested*, waits for the bundled Linux guest, transfers the app and launches it inside that guest (never on Windows).
 
 1. Obtain the **user-selected, trusted x86-64 Type 2 AppImage or standalone Linux ELF executable** as a local file on the Windows host. If the user supplies a path, use it. If they supply a trusted publisher download URL, download the requested binary to a local file and verify the source; do **not** run it on Windows. Do not invent a path or download from an untrusted mirror.
 2. Run the install command. It automatically picks a desktop VM **only if exactly one exists**. With multiple desktops, run `vm list` and use `--vm <id>` to target the user-approved VM; if unclear, ask which VM.
-3. Read the JSON output: `status: "launched"` means the guest launch command succeeded, **not** that the UI definitely displayed. Verify on the VM screen if computer-use access is available; otherwise say that launch was requested and don't claim visual confirmation.
+3. Read the JSON output: `status: "launched"` means the guest launch command succeeded, **not** that the UI definitely displayed. Use `soil_vm_screenshot` from the built-in MCP server (or `vm computer screenshot` from the CLI) to verify the application visually; otherwise report only that launch was requested. Never claim visual success without an observation.
 
 ```powershell
 $soil = (Get-Process -Name Soil | Select-Object -First 1 -ExpandProperty Path)
