@@ -186,6 +186,25 @@ if [[ -n "${SOIL_CUA_DRIVER_ARCHIVE:-}" ]]; then
      for bin in Xorg Xvesa Xfbdev Xvfb startx xinit dbus-daemon; do \
        command -v \$bin || true; done; \
      ls /usr/local/etc/X11 /home/tc/.xsession /home/tc/.xinitrc 2>&1 || true" || true
+  # The guest may boot in a serial-console session without starting an X
+  # display. Start the shipped desktop and verify the X socket exists.
+  if ! ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 xset q >/dev/null 2>&1"; then
+    ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+      "nohup startx >/tmp/soil-startx.log 2>&1 </dev/null &" || true
+    gui_ready=0
+    for attempt in $(seq 1 30); do
+      if ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+        "DISPLAY=:0 xset q >/dev/null 2>&1"; then gui_ready=1; break; fi
+      sleep 1
+    done
+    if [[ "$gui_ready" != 1 ]]; then
+      ssh "${ssh_opts[@]}" tc@127.0.0.1 \
+        "tail -n 100 /tmp/soil-startx.log; ps w | grep -E 'Xorg|Xfbdev|fluxbox' || true" || true
+      echo "Guest X11 did not start; CUA capture is unavailable" >&2
+      exit 1
+    fi
+  fi
+  echo "PROBE: X11 server is reachable on DISPLAY=:0"
   if ! ssh "${ssh_opts[@]}" tc@127.0.0.1 "DISPLAY=:0 /tmp/cua-driver status"; then
     ssh "${ssh_opts[@]}" tc@127.0.0.1 "tail -n 70 /tmp/cua-driver.log" || true
     echo "Cua Driver did not serve inside the guest" >&2
