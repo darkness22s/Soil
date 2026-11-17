@@ -29,6 +29,18 @@ jobs:
           python-version: '3.11'
       - name: Install guest boot dependencies
         run: sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qemu-system-x86 gcc musl-tools busybox-static
+      - name: Fetch Tiny Core-compatible Xorg virtual display driver candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/soil-dummy"
+          cd "$RUNNER_TEMP/soil-dummy"
+          apt-get download xserver-xorg-video-dummy
+          for deb in ./*.deb; do dpkg-deb -x "$deb" .; done
+          driver="$(find "$RUNNER_TEMP/soil-dummy" -name dummy_drv.so -type f -print -quit)"
+          test -n "$driver"
+          echo "SOIL_CUA_DUMMY_MODULE=$driver" >> "$GITHUB_ENV"
+          file "$driver"
       - name: Fetch pinned, verified upstream MIT Cua Driver release
         shell: bash
         run: |
@@ -41,4 +53,5 @@ jobs:
         shell: bash
         env:
           SOIL_CUA_DRIVER_ARCHIVE: ${{ runner.temp }}/cua-driver.tar.gz
+          SOIL_CUA_DUMMY_MODULE: ${{ env.SOIL_CUA_DUMMY_MODULE }}
         run: bash tools/soil-ci/guest-native-smoke.sh app/images
